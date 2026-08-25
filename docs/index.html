@@ -536,12 +536,15 @@
       <button id="adsPingBtn">PING 테스트</button>
       <label for="baudRate">Serial baud</label>
       <input id="baudRate" type="number" min="1200" step="100" value="115200">
-      <label for="bleService">BLE service UUID</label>
-      <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
-      <label for="bleChar">BLE notify characteristic UUID</label>
-      <input id="bleChar" type="text" value="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
-      <label for="bleRxChar">BLE write characteristic UUID</label>
-      <input id="bleRxChar" type="text" value="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
+      <details>
+        <summary>BLE 고급 설정</summary>
+        <label for="bleService">BLE service UUID</label>
+        <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
+        <label for="bleChar">BLE notify characteristic UUID</label>
+        <input id="bleChar" type="text" value="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
+        <label for="bleRxChar">BLE write characteristic UUID</label>
+        <input id="bleRxChar" type="text" value="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
+      </details>
     </div>
 
     <div class="controlGroup">
