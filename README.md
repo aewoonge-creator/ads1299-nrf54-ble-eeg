@@ -1,5 +1,7 @@
 # ADS1299 nRF54 BLE EEG
 
+[웹 GUI 바로 열기](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/)
+
 ADS1299 EEG front-end를 nRF54L15/nRF54L19 보드에 SPI로 연결하고, BLE Nordic UART
 형식으로 PC GUI에 EEG sample을 보내기 위한 프로젝트 시작점입니다.
 
