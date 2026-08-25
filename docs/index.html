@@ -521,26 +521,6 @@
       <button id="loadZipEntry" disabled>열기</button>
     </div>
 
-    <h2>내장 데이터셋</h2>
-    <label for="clarePick">CLARE 바로 열기</label>
-    <select id="clarePick"></select>
-    <button id="loadClareBtn">CLARE 열기</button>
-
-    <h2>조건 라벨</h2>
-    <label for="labelInput">라벨 CSV 수동 업로드</label>
-    <input id="labelInput" type="file" accept=".csv,.txt">
-    <div class="row">
-      <div>
-        <label for="conditionA">조건 A</label>
-        <select id="conditionA"></select>
-      </div>
-      <div>
-        <label for="conditionB">조건 B</label>
-        <select id="conditionB"></select>
-      </div>
-    </div>
-    <button id="compareBtn" class="secondary">조건 비교</button>
-
     <div class="controlGroup">
       <h2>1. 연결 상태</h2>
       <div class="statusGrid">
@@ -1172,6 +1152,7 @@ function appendLabelConditions(conditions) {
 function renderConditionSelects() {
   const a = $("conditionA");
   const b = $("conditionB");
+  if (!a || !b) return;
   const prevA = a.value;
   const prevB = b.value;
   a.innerHTML = "";
@@ -2074,7 +2055,7 @@ $("fileInput").addEventListener("change", e => {
   const file = e.target.files[0];
   if (file) handleFile(file).catch(err => status(String(err.stack || err)));
 });
-$("labelInput").addEventListener("change", e => {
+$("labelInput")?.addEventListener("change", e => {
   const file = e.target.files[0];
   if (file) handleLabelFile(file).catch(err => status(String(err.stack || err)));
 });
@@ -2083,23 +2064,23 @@ $("compareFileInput").addEventListener("change", e => {
   if (file) handleCompareFile(file).catch(err => status(String(err.stack || err)));
 });
 $("loadZipEntry").addEventListener("click", () => loadZipEntry($("zipEntry").value));
-$("loadClareBtn").addEventListener("click", () => loadClareSelected().catch(err => status(String(err.stack || err))));
+$("loadClareBtn")?.addEventListener("click", () => loadClareSelected().catch(err => status(String(err.stack || err))));
 $("applyBtn").addEventListener("click", analyze);
 $("exportBtn").addEventListener("click", exportSummary);
-$("compareBtn").addEventListener("click", () => {
+$("compareBtn")?.addEventListener("click", () => {
   state.view = "compare";
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === "compare"));
   buildCompare();
   renderComparePowerBars(state.compare);
   draw();
 });
-$("conditionA").addEventListener("change", () => {
+$("conditionA")?.addEventListener("change", () => {
   if (state.view === "compare") {
     buildCompare();
     draw();
   }
 });
-$("conditionB").addEventListener("change", () => {
+$("conditionB")?.addEventListener("change", () => {
   if (state.view === "compare") {
     buildCompare();
     draw();
@@ -2167,7 +2148,7 @@ window.addEventListener("resize", draw);
 updateMetrics();
 renderPowerBars();
 draw();
-initClarePicker();
+if ($("clarePick")) initClarePicker();
 </script>
 </body>
 </html>
