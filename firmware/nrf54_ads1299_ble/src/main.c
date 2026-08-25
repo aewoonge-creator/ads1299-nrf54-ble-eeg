@@ -7,7 +7,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
@@ -27,6 +29,54 @@ static size_t rx_len;
 
 static void ble_send_line(const char *line);
 static void handle_ads1299_command(const char *command);
+
+static bool command_has_token(const char *command, const char *token)
+{
+	return strstr(command, token) != NULL;
+}
+
+static uint32_t command_get_u32(const char *command, const char *key, uint32_t fallback)
+{
+	const char *pos = strstr(command, key);
+
+	if (!pos) {
+		return fallback;
+	}
+
+	pos += strlen(key);
+	return (uint32_t)strtoul(pos, NULL, 0);
+}
+
+static uint8_t parse_channel_mask(const char *command)
+{
+	const char *pos = strstr(command, "ENABLE=");
+	uint8_t mask = 0;
+
+	if (!pos) {
+		return 0xFF;
+	}
+
+	pos += strlen("ENABLE=");
+	if (strncmp(pos, "NONE", 4) == 0) {
+		return 0x00;
+	}
+
+	while (*pos) {
+		char *end = NULL;
+		long channel = strtol(pos, &end, 10);
+
+		if (end == pos) {
+			pos++;
+			continue;
+		}
+		if (channel >= 1 && channel <= ADS1299_CHANNEL_COUNT) {
+			mask |= BIT(channel - 1);
+		}
+		pos = end;
+	}
+
+	return mask;
+}
 
 static void ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
@@ -151,7 +201,34 @@ static void handle_ads1299_command(const char *command)
 		ble_send_line(err == 0 ? "OK STOP\n" : "ERR STOP\n");
 		return;
 	}
-	if (strcmp(command, "ADS1299 RREG ID") == 0 || strcmp(command, "ADS1299 RREG ALL") == 0) {
+	if (strcmp(command, "ADS1299 RREG ALL") == 0) {
+		char response[128];
+		uint8_t id = 0;
+		uint8_t config1 = 0;
+		uint8_t config2 = 0;
+		uint8_t config3 = 0;
+		int err = ads1299_read_register(0x00, &id);
+
+		if (err == 0) {
+			err = ads1299_read_register(0x01, &config1);
+		}
+		if (err == 0) {
+			err = ads1299_read_register(0x02, &config2);
+		}
+		if (err == 0) {
+			err = ads1299_read_register(0x03, &config3);
+		}
+		if (err == 0) {
+			snprintk(response, sizeof(response),
+				"REG ID=0x%02X CONFIG1=0x%02X CONFIG2=0x%02X CONFIG3=0x%02X\n",
+				id, config1, config2, config3);
+			ble_send_line(response);
+		} else {
+			ble_send_line("ERR RREG_ALL\n");
+		}
+		return;
+	}
+	if (strcmp(command, "ADS1299 RREG ID") == 0) {
 		uint8_t id = 0;
 		char response[32];
 		int err = ads1299_read_id(&id);
@@ -163,13 +240,37 @@ static void handle_ads1299_command(const char *command)
 		}
 		return;
 	}
+	if (strncmp(command, "ADS1299 RREG ", 13) == 0) {
+		uint8_t reg = (uint8_t)strtoul(command + 13, NULL, 0);
+		uint8_t value = 0;
+		char response[32];
+		int err = ads1299_read_register(reg, &value);
+
+		if (err == 0) {
+			snprintk(response, sizeof(response), "REG 0x%02X 0x%02X\n", reg, value);
+			ble_send_line(response);
+		} else {
+			ble_send_line("ERR RREG\n");
+		}
+		return;
+	}
+	if (strncmp(command, "ADS1299 WREG ", 13) == 0) {
+		char *end = NULL;
+		uint8_t reg = (uint8_t)strtoul(command + 13, &end, 0);
+		uint8_t value = (uint8_t)strtoul(end, NULL, 0);
+		int err = ads1299_write_register(reg, value);
+
+		ble_send_line(err == 0 ? "OK WREG\n" : "ERR WREG\n");
+		return;
+	}
 	if (strncmp(command, "ADS1299 CONFIG", 14) == 0) {
 		struct ads1299_config config = {
-			.sample_rate_sps = 250,
-			.gain = 24,
-			.bias_enabled = true,
-			.lead_off_enabled = false,
-			.test_signal_enabled = strstr(command, "TEST=ON") != NULL,
+			.sample_rate_sps = command_get_u32(command, "RATE=", 250),
+			.gain = command_get_u32(command, "GAIN=", 24),
+			.bias_enabled = command_has_token(command, "BIAS=ON"),
+			.lead_off_enabled = command_has_token(command, "LOFF=ON"),
+			.test_signal_enabled = command_has_token(command, "TEST=ON") ||
+				command_has_token(command, "MUX=TEST"),
 			.enabled_channel_mask = 0xFF,
 		};
 		int err = ads1299_apply_config(&config);
@@ -177,7 +278,16 @@ static void handle_ads1299_command(const char *command)
 		return;
 	}
 	if (strncmp(command, "ADS1299 CHANNELS", 16) == 0) {
-		ble_send_line("OK CHANNELS\n");
+		struct ads1299_config config = {
+			.sample_rate_sps = 250,
+			.gain = 24,
+			.bias_enabled = true,
+			.lead_off_enabled = false,
+			.test_signal_enabled = false,
+			.enabled_channel_mask = parse_channel_mask(command),
+		};
+		int err = ads1299_apply_config(&config);
+		ble_send_line(err == 0 ? "OK CHANNELS\n" : "ERR CHANNELS\n");
 		return;
 	}
 

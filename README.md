@@ -58,6 +58,16 @@ https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/
 Web Bluetooth는 HTTPS 또는 localhost에서만 안정적으로 동작하므로, 다른 노트북에서는
 GitHub Pages 방식이 가장 간단합니다.
 
+웹 GUI에는 ADS1299 bring-up에 필요한 핵심 제어 기능을 먼저 넣어두었습니다.
+
+- Init / Start / Stop
+- Read ID / Read all registers
+- sample rate, gain, MUX, reference 설정
+- BIAS / lead-off / internal test signal 설정
+- channel enable mask
+- single register read/write
+- custom command
+
 ## BLE Text Protocol
 
 PC GUI -> nRF:

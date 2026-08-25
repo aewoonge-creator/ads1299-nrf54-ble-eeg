@@ -514,6 +514,82 @@
       <button id="adsTestBtn">Test Signal</button>
       <button id="adsRegBtn">Read Regs</button>
     </div>
+    <div class="triple">
+      <div>
+        <label for="adsRate">SPS</label>
+        <select id="adsRate">
+          <option>250</option>
+          <option>500</option>
+          <option>1000</option>
+          <option>2000</option>
+          <option>4000</option>
+          <option>8000</option>
+          <option>16000</option>
+        </select>
+      </div>
+      <div>
+        <label for="adsGain">Gain</label>
+        <select id="adsGain">
+          <option>24</option>
+          <option>12</option>
+          <option>8</option>
+          <option>6</option>
+          <option>4</option>
+          <option>2</option>
+          <option>1</option>
+        </select>
+      </div>
+      <div>
+        <label for="adsMux">MUX</label>
+        <select id="adsMux">
+          <option>NORMAL</option>
+          <option>TEST</option>
+          <option>SHORTED</option>
+          <option>BIAS_MEAS</option>
+          <option>MVDD</option>
+          <option>TEMP</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="adsRef">Reference</label>
+        <select id="adsRef">
+          <option>SRB1</option>
+          <option>SRB2</option>
+          <option>DIFFERENTIAL</option>
+        </select>
+      </div>
+      <div>
+        <label for="adsChannels">Channels</label>
+        <input id="adsChannels" type="text" value="1,2,3,4,5,6,7,8">
+      </div>
+    </div>
+    <div class="checks">
+      <label class="check"><input id="adsBiasOn" type="checkbox" checked>BIAS</label>
+      <label class="check"><input id="adsLoffOn" type="checkbox">Lead-off</label>
+      <label class="check"><input id="adsTestOn" type="checkbox">Test</label>
+      <label class="check"><input id="adsApplyChannelsOn" type="checkbox" checked>CH enable</label>
+    </div>
+    <div class="row">
+      <button id="adsApplyConfigBtn">Apply Config</button>
+      <button id="adsApplyChannelsBtn">Apply Channels</button>
+    </div>
+    <h2>Register Map</h2>
+    <div class="row">
+      <div>
+        <label for="adsRegAddr">Register</label>
+        <input id="adsRegAddr" type="text" value="0x00">
+      </div>
+      <div>
+        <label for="adsRegValue">Value</label>
+        <input id="adsRegValue" type="text" value="0x00">
+      </div>
+    </div>
+    <div class="row">
+      <button id="adsReadRegBtn">Read Register</button>
+      <button id="adsWriteRegBtn">Write Register</button>
+    </div>
     <label for="adsCommand">Custom command</label>
     <input id="adsCommand" type="text" value="ADS1299 RREG ID">
     <button id="adsSendBtn">Send Command</button>
@@ -1744,6 +1820,24 @@ async function sendAds1299Command(command) {
   status(`명령 전송됨:\n${line}`);
 }
 
+function adsConfigCommand() {
+  return [
+    "ADS1299 CONFIG",
+    `RATE=${$("adsRate").value}`,
+    `GAIN=${$("adsGain").value}`,
+    `MUX=${$("adsMux").value}`,
+    `REF=${$("adsRef").value}`,
+    `BIAS=${$("adsBiasOn").checked ? "ON" : "OFF"}`,
+    `LOFF=${$("adsLoffOn").checked ? "ON" : "OFF"}`,
+    `TEST=${$("adsTestOn").checked ? "ON" : "OFF"}`
+  ].join(" ");
+}
+
+function adsChannelsCommand() {
+  const enabled = $("adsApplyChannelsOn").checked ? $("adsChannels").value.trim() : "";
+  return `ADS1299 CHANNELS ENABLE=${enabled || "NONE"}`;
+}
+
 async function readTextStream(reader, source) {
   let buffer = "";
   while (true) {
@@ -1767,7 +1861,7 @@ function appendStreamLine(line, source) {
   if (!line.trim()) return;
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
-  if (/^(OK|ERR|REG)\b/i.test(line.trim())) {
+  if (/^(OK|ERR|REG|RX|PONG)\b/i.test(line.trim())) {
     status(`${source}\n${line.trim()}`);
     return;
   }
@@ -1847,6 +1941,10 @@ $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STA
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
 $("adsTestBtn").addEventListener("click", () => sendAds1299Command("ADS1299 CONFIG RATE=250 GAIN=24 MUX=TEST REF=SRB1 BIAS=ON LOFF=OFF TEST=ON").catch(err => status(String(err.stack || err))));
 $("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
+$("adsApplyConfigBtn").addEventListener("click", () => sendAds1299Command(adsConfigCommand()).catch(err => status(String(err.stack || err))));
+$("adsApplyChannelsBtn").addEventListener("click", () => sendAds1299Command(adsChannelsCommand()).catch(err => status(String(err.stack || err))));
+$("adsReadRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 RREG ${$("adsRegAddr").value.trim()}`).catch(err => status(String(err.stack || err))));
+$("adsWriteRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 WREG ${$("adsRegAddr").value.trim()} ${$("adsRegValue").value.trim()}`).catch(err => status(String(err.stack || err))));
 $("adsSendBtn").addEventListener("click", () => sendAds1299Command($("adsCommand").value).catch(err => status(String(err.stack || err))));
 
 document.querySelectorAll(".tab").forEach(btn => {

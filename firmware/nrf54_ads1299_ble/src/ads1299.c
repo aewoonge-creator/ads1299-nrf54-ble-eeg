@@ -242,6 +242,20 @@ int ads1299_read_id(uint8_t *id)
 	return ads1299_read_reg(ADS1299_REG_ID, id);
 }
 
+int ads1299_read_register(uint8_t reg, uint8_t *value)
+{
+	if (!value) {
+		return -EINVAL;
+	}
+
+	return ads1299_read_reg(reg, value);
+}
+
+int ads1299_write_register(uint8_t reg, uint8_t value)
+{
+	return ads1299_write_reg(reg, value);
+}
+
 int ads1299_apply_config(const struct ads1299_config *config)
 {
 	int err;
