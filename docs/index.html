@@ -1,0 +1,1901 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EEG Plot Lab</title>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d7dce5;
+      --soft: #eef4f7;
+      --accent: #0f766e;
+      --accent2: #2563eb;
+      --warn: #b42318;
+      --ok: #067647;
+      --shadow: 0 10px 26px rgba(16, 24, 40, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    main {
+      width: min(1540px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 14px;
+    }
+
+    aside, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    aside {
+      padding: 16px;
+      overflow: auto;
+      max-height: calc(100vh - 32px);
+    }
+
+    h1 {
+      font-size: 23px;
+      margin: 0 0 3px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 14px;
+      margin: 18px 0 9px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      margin: 10px 0 5px;
+    }
+
+    input, select, button {
+      font: inherit;
+      color: var(--ink);
+    }
+
+    input[type="number"], input[type="text"], select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 9px;
+      background: #fff;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      border: 1px dashed #b9c3d4;
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfcff;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 6px;
+      padding: 8px 10px;
+      cursor: pointer;
+      min-height: 36px;
+    }
+
+    button.primary {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    button.secondary {
+      color: #fff;
+      background: var(--accent2);
+      border-color: var(--accent2);
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .triple {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .checks {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .regionGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 8px;
+      background: #fff;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 9px 10px;
+      border-radius: 6px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .topbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 12px;
+      overflow: auto;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tab {
+      min-width: 92px;
+      background: #fff;
+    }
+
+    .tab.active {
+      background: #172033;
+      border-color: #172033;
+      color: #fff;
+    }
+
+    .metrics {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: end;
+    }
+
+    .metric {
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcff;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .plotPanel {
+      display: grid;
+      grid-template-rows: auto auto minmax(360px, 1fr) auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .plotHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 12px 0;
+      min-width: 0;
+    }
+
+    .plotHeader strong {
+      font-size: 14px;
+    }
+
+    .plotHeader span {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .analysisBox {
+      margin: 8px 12px 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcff;
+      padding: 10px;
+    }
+
+    .analysisBox h2 {
+      margin: 0 0 8px;
+    }
+
+    .analysisGrid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 6px;
+    }
+
+    .analysisItem {
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid #e3e8f0;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .analysisItem strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--ink);
+      font-size: 11px;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      min-height: 430px;
+      display: block;
+    }
+
+    .sidePanel {
+      padding: 12px;
+      overflow: auto;
+      max-height: 360px;
+    }
+
+    .channels {
+      display: grid;
+      gap: 5px;
+      max-height: 230px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 6px;
+      background: #fbfcff;
+    }
+
+    .channel {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      padding: 4px 2px;
+    }
+
+    .powerRow {
+      display: grid;
+      grid-template-columns: 56px 1fr 58px;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      margin: 7px 0;
+    }
+
+    .bar {
+      height: 10px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: var(--accent2);
+    }
+
+    .powerPanel {
+      border-top: 1px solid var(--line);
+      padding: 10px 12px 12px;
+      background: #fbfcff;
+    }
+
+    .powerPanel h2 {
+      margin: 0 0 8px;
+    }
+
+    .powerGrid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .powerTile,
+    .powerCompareRow {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .powerTile {
+      grid-template-columns: 56px 1fr 48px;
+      align-items: center;
+    }
+
+    .powerCompareRow {
+      grid-template-columns: 56px 1fr;
+      align-items: center;
+    }
+
+    .powerTile strong,
+    .powerTile span,
+    .powerCompareRow strong,
+    .powerCompareRow span {
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .vbar {
+      height: 12px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+
+    .vbar i {
+      display: block;
+      width: 0%;
+      height: 100%;
+      background: var(--accent2);
+    }
+
+    .compareBars {
+      display: grid;
+      gap: 4px;
+    }
+
+    .compareLine {
+      display: grid;
+      grid-template-columns: 18px 1fr 42px;
+      gap: 6px;
+      align-items: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .compareTrack {
+      height: 9px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+
+    .compareTrack i {
+      display: block;
+      height: 100%;
+      width: 0%;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      border-left: 3px solid var(--accent);
+      padding-left: 8px;
+      margin-top: 10px;
+    }
+
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      aside { max-height: none; }
+      .sidePanel { max-height: none; }
+      canvas { min-height: 420px; }
+      .analysisGrid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .regionGrid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <aside>
+    <h1>EEG Plot Lab</h1>
+    <p>CSV, ZIP, USB Serial, BLE stream에서 실제 들어온 EEG 채널만 분석합니다.</p>
+
+    <h2>입력 / 비교 파일</h2>
+    <label for="fileInput">파일 A</label>
+    <input id="fileInput" type="file" accept=".csv,.txt,.zip">
+    <label for="compareFileInput">비교 파일 B</label>
+    <input id="compareFileInput" type="file" accept=".csv,.txt">
+
+    <div id="zipControls" class="hidden">
+      <label for="zipEntry">ZIP 내부 CSV</label>
+      <select id="zipEntry" disabled></select>
+      <button id="loadZipEntry" disabled>열기</button>
+    </div>
+
+    <h2>내장 데이터셋</h2>
+    <label for="clarePick">CLARE 바로 열기</label>
+    <select id="clarePick"></select>
+    <button id="loadClareBtn">CLARE 열기</button>
+
+    <h2>조건 라벨</h2>
+    <label for="labelInput">라벨 CSV 수동 업로드</label>
+    <input id="labelInput" type="file" accept=".csv,.txt">
+    <div class="row">
+      <div>
+        <label for="conditionA">조건 A</label>
+        <select id="conditionA"></select>
+      </div>
+      <div>
+        <label for="conditionB">조건 B</label>
+        <select id="conditionB"></select>
+      </div>
+    </div>
+    <button id="compareBtn" class="secondary">조건 비교</button>
+
+    <h2>통신</h2>
+    <div class="row">
+      <button id="serialBtn" class="primary">USB Serial</button>
+      <button id="bleBtn" class="primary">BLE</button>
+    </div>
+    <label for="baudRate">Serial baud</label>
+    <input id="baudRate" type="number" min="1200" step="100" value="115200">
+    <label for="bleService">BLE service UUID</label>
+    <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
+    <label for="bleChar">BLE notify characteristic UUID</label>
+    <input id="bleChar" type="text" value="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
+    <label for="bleRxChar">BLE write characteristic UUID</label>
+    <input id="bleRxChar" type="text" value="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
+
+    <h2>ADS1299 제어</h2>
+    <div class="row">
+      <button id="adsInitBtn">Init</button>
+      <button id="adsReadIdBtn">Read ID</button>
+    </div>
+    <div class="row">
+      <button id="adsStartBtn" class="primary">Start</button>
+      <button id="adsStopBtn">Stop</button>
+    </div>
+    <div class="row">
+      <button id="adsTestBtn">Test Signal</button>
+      <button id="adsRegBtn">Read Regs</button>
+    </div>
+    <label for="adsCommand">Custom command</label>
+    <input id="adsCommand" type="text" value="ADS1299 RREG ID">
+    <button id="adsSendBtn">Send Command</button>
+
+    <h2>CSV 설정</h2>
+    <div class="row">
+      <div>
+        <label for="timeColumn">시간 컬럼</label>
+        <select id="timeColumn"></select>
+      </div>
+      <div>
+        <label for="fsInput">Hz</label>
+        <input id="fsInput" type="number" min="1" step="1" value="250">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="startSec">시작 s</label>
+        <input id="startSec" type="number" min="0" step="1" value="0">
+      </div>
+      <div>
+        <label for="durationSec">길이 s</label>
+        <input id="durationSec" type="number" min="1" step="1" value="10">
+      </div>
+    </div>
+
+    <h2>필터</h2>
+    <div class="triple">
+      <div>
+        <label for="hpInput">HP</label>
+        <input id="hpInput" type="number" min="0" step="0.1" value="0.5">
+      </div>
+      <div>
+        <label for="lpInput">LP</label>
+        <input id="lpInput" type="number" min="1" step="1" value="45">
+      </div>
+      <div>
+        <label for="notchInput">Notch</label>
+        <input id="notchInput" type="number" min="0" step="1" value="60">
+      </div>
+    </div>
+    <div class="checks">
+      <label class="check"><input id="hpOn" type="checkbox" checked>High-pass</label>
+      <label class="check"><input id="lpOn" type="checkbox" checked>Low-pass</label>
+      <label class="check"><input id="notchOn" type="checkbox" checked>Notch</label>
+      <label class="check"><input id="detrendOn" type="checkbox" checked>DC 제거</label>
+    </div>
+
+    <h2>분석</h2>
+    <label for="maxFreqInput">스펙트럼 최대 Hz</label>
+    <input id="maxFreqInput" type="number" min="5" step="1" value="45">
+    <div class="checks">
+      <label class="check"><input id="showIndividualSpectra" type="checkbox">개별 스펙트럼</label>
+      <label class="check"><input id="normalizeSpectra" type="checkbox" checked>상대 dB</label>
+    </div>
+    <div class="row">
+      <button id="applyBtn" class="primary">분석 적용</button>
+      <button id="exportBtn">요약 저장</button>
+    </div>
+
+    <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
+  </aside>
+
+  <div class="workspace">
+    <div class="panel topbar">
+      <div class="tabs">
+        <button class="tab active" data-view="raw">Raw</button>
+        <button class="tab" data-view="filtered">Filtered</button>
+        <button class="tab" data-view="bands">Bands</button>
+        <button class="tab" data-view="fft">FFT</button>
+        <button class="tab" data-view="psd">PSD</button>
+        <button class="tab" data-view="compare">Compare</button>
+      </div>
+      <div class="metrics">
+        <div class="metric" id="mSamples">samples: 0</div>
+        <div class="metric" id="mChannels">channels: 0</div>
+        <div class="metric" id="mFs">fs: -</div>
+      </div>
+    </div>
+
+      <div class="panel plotPanel">
+        <div class="plotHeader">
+          <strong id="plotTitle">Raw EEG</strong>
+          <span id="plotSub">파일을 올리면 CSV 컬럼에서 EEG 채널을 자동 탐지합니다.</span>
+        </div>
+        <div class="analysisBox">
+          <h2>분석 로그 / 설정 확인</h2>
+          <div id="analysisLog" class="analysisGrid"></div>
+        </div>
+        <canvas id="plot"></canvas>
+        <div class="powerPanel">
+          <h2>상대 Power</h2>
+          <div id="powerBars" class="powerGrid"></div>
+        </div>
+      </div>
+
+      <div class="panel sidePanel">
+        <h2>채널</h2>
+        <div class="regionGrid">
+          <button id="selectFrontal">Frontal</button>
+          <button id="selectCentral">Central</button>
+          <button id="selectTemporal">Temporal</button>
+          <button id="selectParietal">Parietal</button>
+          <button id="selectOccipital">Occipital</button>
+          <button id="selectAll">전체</button>
+          <button id="clearChannels">해제</button>
+        </div>
+        <div id="channels" class="channels"></div>
+
+        <div class="note">
+          전극 이름과 개수는 dataset/장비마다 다릅니다. 채널은 CSV 컬럼에서 자동 탐지하고, 형식 안내는 알려진 dataset 패턴과 맞을 때만 표시합니다.
+        </div>
+      </div>
+  </div>
+</main>
+
+<script>
+const state = {
+  rows: [],
+  headers: [],
+  channels: [],
+  selected: new Set(),
+  view: "raw",
+  sourceName: "",
+  zip: null,
+  lastAnalysis: null,
+  streamHeaders: null,
+  streamRows: [],
+  demoLoaded: false,
+  labelRows: [],
+  labelHeaders: [],
+  conditions: [],
+  compare: null,
+  compareDataset: null,
+  clareItems: [],
+  lastStatus: "",
+  bleDevice: null,
+  bleRxCharacteristic: null,
+  bleTxCharacteristic: null
+};
+
+const bands = {
+  Delta: [1, 4],
+  Theta: [4, 8],
+  Alpha: [8, 13],
+  Beta: [13, 30],
+  Gamma: [30, 45]
+};
+
+const $ = id => document.getElementById(id);
+function status(msg) {
+  $("status").textContent = msg;
+  state.lastStatus = msg;
+  updateAnalysisLog();
+}
+
+function shortName(name) {
+  if (!name) return "-";
+  return String(name).split(/[\\/]/).pop();
+}
+
+function enabledFiltersText() {
+  const filters = [];
+  if ($("detrendOn").checked) filters.push("DC 제거");
+  if ($("hpOn").checked) filters.push(`HP ${$("hpInput").value} Hz`);
+  if ($("lpOn").checked) filters.push(`LP ${$("lpInput").value} Hz`);
+  if ($("notchOn").checked) filters.push(`Notch ${$("notchInput").value} Hz`);
+  return filters.length ? filters.join(" + ") : "없음";
+}
+
+function addAnalysisItem(label, value) {
+  return `<div class="analysisItem"><strong>${label}</strong>${value}</div>`;
+}
+
+function updateAnalysisLog() {
+  const el = $("analysisLog");
+  if (!el) return;
+  const a = state.lastAnalysis;
+  const selected = a?.selected?.length ?? state.selected.size;
+  const timeCol = $("timeColumn")?.value || "-";
+  const fs = a?.fs || Number($("fsInput")?.value) || "-";
+  const start = Number($("startSec")?.value) || 0;
+  const duration = Number($("durationSec")?.value) || 0;
+  const mode = state.view === "compare" && state.compare
+    ? `${state.compare.condA?.label || "A"} vs ${state.compare.condB?.label || "B"}`
+    : state.view;
+  const compareSource = state.compareDataset ? shortName(state.compareDataset.sourceName) : "없음";
+  const labelInfo = state.labelRows.length
+    ? `${state.labelRows.length.toLocaleString()}행, 조건 ${state.conditions.length}개`
+    : "없음";
+  const items = [
+    ["파일 A", shortName(state.sourceName)],
+    ["비교 파일 B", compareSource],
+    ["현재 보기", mode],
+    ["샘플 / 채널", `${state.rows.length.toLocaleString()} / ${state.channels.length}`],
+    ["선택 채널", `${selected}개`],
+    ["fs", `${fs} Hz`],
+    ["시간 기준", timeColumnLabel(timeCol)],
+    ["분석 구간", `${start}-${start + duration}s`],
+    ["필터", enabledFiltersText()],
+    ["스펙트럼", `${$("maxFreqInput")?.value || 45} Hz까지, ${$("normalizeSpectra")?.checked ? "상대 dB" : "원 단위"}`],
+    ["라벨", labelInfo],
+    ["마지막 상태", state.lastStatus ? state.lastStatus.split("\n")[0] : "-"]
+  ];
+  el.innerHTML = items.map(([k, v]) => addAnalysisItem(k, v)).join("");
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i], n = text[i + 1];
+    if (quoted) {
+      if (c === '"' && n === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else {
+      if (c === '"') quoted = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n") {
+        row.push(field.replace(/\r$/, ""));
+        if (row.some(v => v.trim() !== "")) rows.push(row);
+        row = []; field = "";
+      } else field += c;
+    }
+  }
+  row.push(field.replace(/\r$/, ""));
+  if (row.some(v => v.trim() !== "")) rows.push(row);
+  if (rows.length < 2) return { headers: [], rows: [] };
+  const headers = rows[0].map(h => h.trim());
+  const data = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = Number.parseFloat(r[i]));
+    return obj;
+  });
+  return { headers, rows: data };
+}
+
+function detectChannels(headers) {
+  const eeg = headers.filter(h => /^EEG_/i.test(h));
+  if (eeg.length) return eeg;
+  const museRaw = headers.filter(h => /^RAW_/i.test(h));
+  if (museRaw.length) return museRaw;
+  const muse = headers.filter(h => /^(TP9|AF7|AF8|TP10)$/i.test(h));
+  if (muse.length) return muse;
+  return headers.filter(h => /^(Fp|AF|F|FC|FT|C|CP|T|TP|P|PO|O|Oz|Cz|Pz|Fz)/i.test(h));
+}
+
+function datasetHint(headers) {
+  const joined = headers.join(",");
+  if (/^participant,trialNumber,sessionTime,trialTime,EEG_/i.test(joined)) {
+    return "알려진 Clean CSV 패턴과 일치: 64채널 EEG + EOG/ECG/GSR/Respir/contArousal";
+  }
+  if (headers.includes("TP9") && headers.includes("AF7") && headers.includes("AF8") && headers.includes("TP10")) {
+    return "알려진 CLARE/Muse 패턴과 일치: TP9, AF7, AF8, TP10 raw EEG";
+  }
+  if (headers.some(h => /^RAW_/i.test(h)) && headers.some(h => /^Alpha_/i.test(h))) {
+    return "알려진 UNIVERSE/Muse 패턴과 일치: RAW 채널과 Delta/Theta/Alpha/Beta/Gamma 컬럼 포함";
+  }
+  return "알려진 dataset 패턴 없음: CSV 컬럼명만 기준으로 채널 탐지";
+}
+
+function isKnownMetaColumn(name) {
+  return /^(participant|trialnumber|sessiontime|trialtime|timestamp|time|sample|samples|eog_|ecg|heartrate|gsr|irpleth|respir|contarousal)$/i.test(name);
+}
+
+function detectTimeColumn(headers) {
+  const candidates = ["Timestamp", "TimeStamp", "sessionTime", "trialTime", "time"];
+  return candidates.find(c => headers.includes(c)) || headers[0] || "";
+}
+
+function timeColumnOptions(headers) {
+  const likely = headers.filter(h => /^(timestamp|time|sessiontime|trialtime|sample|samples|t)$/i.test(h));
+  return ["__sample_index__", ...likely];
+}
+
+function timeColumnLabel(value) {
+  return value === "__sample_index__" ? "sample index (fs 기준)" : value;
+}
+
+function estimateFs(rows, timeCol, fallback) {
+  if (!timeCol || rows.length < 3) return fallback;
+  const vals = rows.slice(0, Math.min(rows.length, 2000)).map(r => r[timeCol]).filter(Number.isFinite);
+  const diffs = [];
+  for (let i = 1; i < vals.length; i++) {
+    const d = vals[i] - vals[i - 1];
+    if (d > 0 && Number.isFinite(d)) diffs.push(d);
+  }
+  if (!diffs.length) return fallback;
+  diffs.sort((a, b) => a - b);
+  const med = diffs[Math.floor(diffs.length / 2)];
+  return med > 0 ? Math.round(1 / med) : fallback;
+}
+
+function loadDataset(headers, rows, name) {
+  state.headers = headers;
+  state.rows = rows.filter(r => Object.values(r).some(Number.isFinite));
+  state.channels = detectChannels(headers);
+  state.selected = new Set(state.channels.slice(0, Math.min(8, state.channels.length)));
+  state.sourceName = name;
+  const timeCol = detectTimeColumn(headers);
+  const timeOptions = timeColumnOptions(headers);
+  const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
+  fillSelect($("timeColumn"), timeOptions, selectedTime, timeColumnLabel);
+  const fs = estimateFs(state.rows, selectedTime, Number($("fsInput").value) || 250);
+  $("fsInput").value = fs;
+  buildConditions();
+  renderChannels();
+  analyze();
+  status(`${name}\n${datasetHint(headers)}\n탐지 채널 ${state.channels.length}개, fs 추정 ${fs} Hz`);
+}
+
+function fillSelect(select, values, selected, labeler = v => v) {
+  select.innerHTML = "";
+  values.forEach(v => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = labeler(v);
+    o.selected = v === selected;
+    select.appendChild(o);
+  });
+}
+
+function sliceRows() {
+  const fs = Number($("fsInput").value) || 250;
+  const timeCol = $("timeColumn").value;
+  const start = Number($("startSec").value) || 0;
+  const dur = Number($("durationSec").value) || 10;
+  if (!state.rows.length) return { rows: [], fs, timeCol };
+  if (timeCol === "__sample_index__") {
+    return { rows: state.rows.slice(Math.floor(start * fs), Math.floor((start + dur) * fs)), fs, timeCol };
+  }
+  const hasTime = timeCol && state.rows.some(r => Number.isFinite(r[timeCol]));
+  if (!hasTime) return { rows: state.rows.slice(Math.floor(start * fs), Math.floor((start + dur) * fs)), fs, timeCol };
+  const first = state.rows.find(r => Number.isFinite(r[timeCol]))[timeCol];
+  return {
+    rows: state.rows.filter(r => Number.isFinite(r[timeCol]) && r[timeCol] - first >= start && r[timeCol] - first <= start + dur),
+    fs,
+    timeCol
+  };
+}
+
+function datasetView() {
+  return {
+    rows: state.rows,
+    headers: state.headers,
+    channels: state.channels,
+    fs: Number($("fsInput").value) || 250,
+    timeCol: $("timeColumn").value,
+    sourceName: state.sourceName
+  };
+}
+
+function rowsByCondition(condition, dataset = datasetView()) {
+  if (!condition || !dataset.rows.length) return [];
+  if (condition.kind === "all") return dataset.rows.slice();
+  if (condition.kind === "time") {
+    const fs = dataset.fs || 250;
+    const timeCol = dataset.timeCol;
+    if (timeCol && timeCol !== "__sample_index__") {
+      const vals = dataset.rows.map(r => r[timeCol]).filter(Number.isFinite);
+      if (vals.length) {
+        const first = Math.min(...vals);
+        const byTime = dataset.rows.filter(r => Number.isFinite(r[timeCol]) && r[timeCol] - first >= condition.start && r[timeCol] - first <= condition.end);
+        if (byTime.length) return byTime;
+      }
+    }
+    return dataset.rows.slice(Math.floor(condition.start * fs), Math.floor(condition.end * fs));
+  }
+  if (condition.kind === "trial") {
+    return dataset.rows.filter(r => String(r.trialNumber) === String(condition.trial));
+  }
+  if (condition.kind === "arousal") {
+    return dataset.rows.filter(r => Number.isFinite(r.contArousal) && r.contArousal >= condition.min && r.contArousal <= condition.max);
+  }
+  return [];
+}
+
+function currentDurationSec() {
+  const fs = Number($("fsInput").value) || 250;
+  const timeCol = $("timeColumn").value;
+  if (timeCol && timeCol !== "__sample_index__") {
+    const vals = state.rows.map(r => r[timeCol]).filter(Number.isFinite);
+    if (vals.length > 1) return Math.max(...vals) - Math.min(...vals);
+  }
+  return state.rows.length / fs;
+}
+
+function quantile(values, q) {
+  if (!values.length) return NaN;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(q * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+function buildConditions() {
+  const conditions = [];
+  if (!state.rows.length) {
+    state.conditions = [];
+    renderConditionSelects();
+    return;
+  }
+  conditions.push({ name: "전체 구간", kind: "all" });
+  const dur = currentDurationSec();
+  if (dur > 10) {
+    for (let start = 0; start < Math.min(dur, 120); start += 10) {
+      const end = Math.min(start + 10, dur);
+      conditions.push({ name: `${start.toFixed(0)}-${end.toFixed(0)}초 window`, kind: "time", start, end });
+    }
+  }
+  if (state.headers.includes("trialNumber")) {
+    const trials = [...new Set(state.rows.map(r => r.trialNumber).filter(Number.isFinite))].sort((a, b) => a - b);
+    trials.slice(0, 48).forEach(t => conditions.push({ name: `trial ${t}`, kind: "trial", trial: t }));
+  }
+  if (state.headers.includes("contArousal")) {
+    const vals = state.rows.map(r => r.contArousal).filter(Number.isFinite);
+    if (vals.length) {
+      const q33 = quantile(vals, 0.33);
+      const q67 = quantile(vals, 0.67);
+      conditions.push({ name: `low arousal <= ${q33.toFixed(3)}`, kind: "arousal", min: -Infinity, max: q33 });
+      conditions.push({ name: `high arousal >= ${q67.toFixed(3)}`, kind: "arousal", min: q67, max: Infinity });
+    }
+  }
+  if (state.labelRows.length) {
+    appendLabelConditions(conditions);
+  }
+  state.conditions = conditions;
+  renderConditionSelects();
+}
+
+function appendLabelConditions(conditions) {
+  const headers = state.labelHeaders;
+  if (headers.some(h => /^level_\d+$/i.test(h))) {
+    headers.filter(h => /^level_\d+$/i.test(h)).forEach(level => {
+      const idx = Number(level.replace(/\D/g, ""));
+      state.labelRows.forEach((row, i) => {
+        const v = row[level];
+        if (Number.isFinite(v)) {
+          conditions.push({ name: `${level} label ${v} @ ${i * 10}-${(i + 1) * 10}초`, kind: "time", start: i * 10, end: (i + 1) * 10, label: v, level: idx });
+        }
+      });
+    });
+  }
+}
+
+function renderConditionSelects() {
+  const a = $("conditionA");
+  const b = $("conditionB");
+  const prevA = a.value;
+  const prevB = b.value;
+  a.innerHTML = "";
+  b.innerHTML = "";
+  state.conditions.forEach((c, i) => {
+    const oa = document.createElement("option");
+    oa.value = String(i);
+    oa.textContent = c.name;
+    a.appendChild(oa);
+    const ob = document.createElement("option");
+    ob.value = String(i);
+    ob.textContent = c.name;
+    b.appendChild(ob);
+  });
+  if (state.conditions.length > 1) {
+    a.value = prevA && Number(prevA) < state.conditions.length ? prevA : "0";
+    b.value = prevB && Number(prevB) < state.conditions.length ? prevB : String(Math.min(1, state.conditions.length - 1));
+  }
+}
+
+function valuesFor(rows, ch) {
+  return rows.map(r => r[ch]).filter(Number.isFinite);
+}
+
+function demean(xs) {
+  if (!xs.length) return xs;
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  return xs.map(v => v - mean);
+}
+
+function biquad(type, cutoff, fs, q = Math.SQRT1_2) {
+  const w0 = 2 * Math.PI * cutoff / fs;
+  const cos = Math.cos(w0), sin = Math.sin(w0);
+  const alpha = sin / (2 * q);
+  let b0, b1, b2, a0, a1, a2;
+  if (type === "lowpass") {
+    b0 = (1 - cos) / 2; b1 = 1 - cos; b2 = (1 - cos) / 2;
+    a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha;
+  } else if (type === "highpass") {
+    b0 = (1 + cos) / 2; b1 = -(1 + cos); b2 = (1 + cos) / 2;
+    a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha;
+  } else {
+    b0 = 1; b1 = -2 * cos; b2 = 1;
+    a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha;
+  }
+  return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0];
+}
+
+function applyBiquad(xs, coeff) {
+  const [b0, b1, b2, a1, a2] = coeff;
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  const out = new Array(xs.length);
+  for (let i = 0; i < xs.length; i++) {
+    const x0 = xs[i];
+    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    out[i] = y0;
+    x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+  }
+  return out;
+}
+
+function filtfilt(xs, coeff) {
+  const fwd = applyBiquad(xs, coeff);
+  return applyBiquad(fwd.slice().reverse(), coeff).reverse();
+}
+
+function filterSignal(xs, fs) {
+  let y = $("detrendOn").checked ? demean(xs) : xs.slice();
+  const hp = Number($("hpInput").value) || 0;
+  const lp = Number($("lpInput").value) || 0;
+  const notch = Number($("notchInput").value) || 0;
+  if ($("hpOn").checked && hp > 0 && hp < fs / 2) y = filtfilt(y, biquad("highpass", hp, fs));
+  if ($("notchOn").checked && notch > 0 && notch < fs / 2) y = filtfilt(y, biquad("notch", notch, fs, 30));
+  if ($("lpOn").checked && lp > 0 && lp < fs / 2) y = filtfilt(y, biquad("lowpass", lp, fs));
+  return y;
+}
+
+function bandSignal(xs, fs, lo, hi) {
+  let y = xs.slice();
+  if (lo > 0) y = filtfilt(y, biquad("highpass", lo, fs));
+  if (hi < fs / 2) y = filtfilt(y, biquad("lowpass", hi, fs));
+  return y;
+}
+
+function nextPow2(n) {
+  let p = 1;
+  while (p < n) p <<= 1;
+  return p;
+}
+
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wlenr = Math.cos(ang), wleni = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let wr = 1, wi = 0;
+      for (let j = 0; j < len / 2; j++) {
+        const uR = re[i + j], uI = im[i + j];
+        const vR = re[i + j + len / 2] * wr - im[i + j + len / 2] * wi;
+        const vI = re[i + j + len / 2] * wi + im[i + j + len / 2] * wr;
+        re[i + j] = uR + vR; im[i + j] = uI + vI;
+        re[i + j + len / 2] = uR - vR; im[i + j + len / 2] = uI - vI;
+        const nwr = wr * wlenr - wi * wleni;
+        wi = wr * wleni + wi * wlenr; wr = nwr;
+      }
+    }
+  }
+}
+
+function spectrum(xs, fs) {
+  const n = nextPow2(Math.min(xs.length, 8192));
+  const src = demean(xs.slice(0, n));
+  const re = new Array(n).fill(0), im = new Array(n).fill(0);
+  for (let i = 0; i < src.length; i++) {
+    const win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (src.length - 1));
+    re[i] = src[i] * win;
+  }
+  fft(re, im);
+  const out = [];
+  for (let k = 1; k < n / 2; k++) {
+    out.push({ f: k * fs / n, y: Math.hypot(re[k], im[k]) / n });
+  }
+  return out;
+}
+
+function welch(xs, fs) {
+  const seg = Math.min(1024, nextPow2(Math.max(64, Math.floor(xs.length / 4))));
+  const step = Math.floor(seg / 2);
+  const bins = new Array(seg / 2).fill(0);
+  let count = 0;
+  for (let start = 0; start + seg <= xs.length; start += step) {
+    const part = demean(xs.slice(start, start + seg));
+    const re = new Array(seg).fill(0), im = new Array(seg).fill(0);
+    for (let i = 0; i < seg; i++) {
+      const win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (seg - 1));
+      re[i] = part[i] * win;
+    }
+    fft(re, im);
+    for (let k = 1; k < seg / 2; k++) bins[k] += (re[k] * re[k] + im[k] * im[k]) / (fs * seg);
+    count++;
+  }
+  return bins.slice(1).map((v, i) => ({ f: (i + 1) * fs / seg, y: count ? v / count : 0 }));
+}
+
+function bandPowers(psd) {
+  const result = {};
+  let total = 0;
+  for (const [name, [lo, hi]] of Object.entries(bands)) {
+    const p = psd.filter(d => d.f >= lo && d.f < hi).reduce((a, d) => a + d.y, 0);
+    result[name] = p;
+    total += p;
+  }
+  for (const k of Object.keys(result)) result[k] = total ? result[k] / total : 0;
+  return result;
+}
+
+function analyze() {
+  if (!state.rows.length) {
+    state.lastAnalysis = null;
+    updateMetrics();
+    renderPowerBars();
+    draw();
+    return;
+  }
+  const { rows, fs, timeCol } = sliceRows();
+  const selected = [...state.selected].filter(ch => state.channels.includes(ch));
+  const data = {};
+  const filtered = {};
+  const psds = {};
+  const ffts = {};
+  selected.forEach(ch => {
+    const xs = valuesFor(rows, ch);
+    data[ch] = xs;
+    filtered[ch] = filterSignal(xs, fs);
+    const maxFreq = Math.min(Number($("maxFreqInput").value) || 45, fs / 2);
+    psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= maxFreq);
+    ffts[ch] = spectrum(filtered[ch], fs).filter(d => d.f <= maxFreq);
+  });
+  const avgPsd = averageCurves(Object.values(psds));
+  state.lastAnalysis = { rows, fs, timeCol, selected, data, filtered, psds, ffts, avgPsd, powers: bandPowers(avgPsd) };
+  if (state.view === "compare") buildCompare();
+  updateMetrics();
+  renderPowerBars();
+  draw();
+}
+
+function analyzeRows(rows, fs, selected) {
+  const filtered = {};
+  const psds = {};
+  selected.forEach(ch => {
+    const xs = valuesFor(rows, ch);
+    filtered[ch] = filterSignal(xs, fs);
+    psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= Math.min(Number($("maxFreqInput").value) || 45, fs / 2));
+  });
+  const avgPsd = averageCurves(Object.values(psds));
+  return { rows, psds, avgPsd, powers: bandPowers(avgPsd) };
+}
+
+function buildCompare() {
+  if (!state.conditions.length || !state.lastAnalysis) {
+    state.compare = null;
+    return;
+  }
+  const idxA = Number($("conditionA").value);
+  const idxB = Number($("conditionB").value);
+  const condA = state.conditions[idxA];
+  const condB = state.conditions[idxB];
+  const datasetA = datasetView();
+  const datasetB = state.compareDataset || datasetA;
+  const selected = state.lastAnalysis.selected.filter(ch => datasetB.channels.includes(ch));
+  const fs = datasetA.fs;
+  const rowsA = rowsByCondition(condA, datasetA);
+  const rowsB = rowsByCondition(condB, datasetB);
+  state.compare = {
+    condA,
+    condB,
+    sourceA: datasetA.sourceName,
+    sourceB: datasetB.sourceName,
+    a: analyzeRows(rowsA, fs, selected),
+    b: analyzeRows(rowsB, datasetB.fs || fs, selected),
+    fs,
+    selected
+  };
+}
+
+function averageCurves(curves) {
+  if (!curves.length) return [];
+  const n = Math.min(...curves.map(c => c.length));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ f: curves[0][i].f, y: curves.reduce((a, c) => a + c[i].y, 0) / curves.length });
+  }
+  return out;
+}
+
+function updateMetrics() {
+  const a = state.lastAnalysis;
+  $("mSamples").textContent = `samples: ${state.rows.length.toLocaleString()}`;
+  $("mChannels").textContent = `channels: ${state.channels.length}`;
+  $("mFs").textContent = a ? `fs: ${a.fs} Hz` : "fs: -";
+  updateAnalysisLog();
+}
+
+function renderChannels() {
+  const wrap = $("channels");
+  wrap.innerHTML = "";
+  state.channels.forEach(ch => {
+    const label = document.createElement("label");
+    label.className = "channel";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = state.selected.has(ch);
+    input.addEventListener("change", () => {
+      if (input.checked) state.selected.add(ch);
+      else state.selected.delete(ch);
+      updateAnalysisLog();
+      analyze();
+    });
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(ch));
+    wrap.appendChild(label);
+  });
+}
+
+function renderPowerBars() {
+  const el = $("powerBars");
+  el.innerHTML = "";
+  const powers = state.lastAnalysis?.powers || {};
+  for (const name of Object.keys(bands)) {
+    const v = powers[name] || 0;
+    const tile = document.createElement("div");
+    tile.className = "powerTile";
+    tile.innerHTML = `<strong>${name}</strong><span class="vbar"><i style="width:${(v * 100).toFixed(1)}%"></i></span><span>${(v * 100).toFixed(1)}%</span>`;
+    el.appendChild(tile);
+  }
+}
+
+function setupCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(300, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(300, Math.floor(rect.height * dpr));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: rect.width, h: rect.height };
+}
+
+function draw() {
+  const canvas = $("plot");
+  const { ctx, w, h } = setupCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
+  const a = state.lastAnalysis;
+  if (!a || !a.selected.length) {
+    $("plotTitle").textContent = "EEG Plot";
+    $("plotSub").textContent = "CSV/ZIP 파일을 올리거나 USB/BLE stream을 연결하세요.";
+    drawEmpty(ctx, w, h, "아직 불러온 EEG 데이터가 없습니다.");
+    return;
+  }
+  if (state.view === "fft") return drawSpectral(ctx, w, h, a, "fft");
+  if (state.view === "psd") return drawSpectral(ctx, w, h, a, "psd");
+  if (state.view === "bands") return drawBands(ctx, w, h, a);
+  if (state.view === "compare") return drawCompare(ctx, w, h);
+  return drawSignals(ctx, w, h, a, state.view === "filtered" ? a.filtered : a.data);
+}
+
+function drawEmpty(ctx, w, h, msg) {
+  ctx.fillStyle = "#667085";
+  ctx.font = "14px Segoe UI";
+  ctx.textAlign = "center";
+  ctx.fillText(msg, w / 2, h / 2);
+}
+
+function drawAxes(ctx, x, y, w, h) {
+  ctx.strokeStyle = "#d7dce5";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, y); ctx.lineTo(x, y + h); ctx.lineTo(x + w, y + h);
+  ctx.stroke();
+  ctx.fillStyle = "#667085";
+  ctx.font = "11px Segoe UI";
+}
+
+function drawSignals(ctx, w, h, a, series) {
+  $("plotTitle").textContent = state.view === "raw" ? "Raw EEG" : "Filtered EEG";
+  $("plotSub").textContent = `${state.sourceName} · ${a.selected.join(", ")}`;
+  const pad = { l: 82, r: 20, t: 22, b: 36 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  drawAxes(ctx, pad.l, pad.t, pw, ph);
+  const lanes = a.selected.length;
+  const colors = ["#2563eb", "#0f766e", "#b42318", "#7c3aed", "#ea580c", "#0891b2", "#4d7c0f", "#be185d"];
+  a.selected.forEach((ch, idx) => {
+    const xs = series[ch] || [];
+    if (xs.length < 2) return;
+    const laneH = ph / lanes;
+    const base = pad.t + laneH * (idx + 0.5);
+    const maxAbs = Math.max(...xs.map(v => Math.abs(v))) || 1;
+    ctx.strokeStyle = colors[idx % colors.length];
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    xs.forEach((v, i) => {
+      const x = pad.l + i / (xs.length - 1) * pw;
+      const y = base - (v / maxAbs) * laneH * 0.38;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = "#172033";
+    ctx.font = "11px Segoe UI";
+    ctx.textAlign = "right";
+    ctx.fillText(ch, pad.l - 10, base + 4);
+  });
+  drawBandGuides(ctx, pad.l, pad.t, pw, ph, false);
+}
+
+function drawBands(ctx, w, h, a) {
+  $("plotTitle").textContent = "Band-pass EEG";
+  $("plotSub").textContent = `대표 채널 ${a.selected[0]}의 Delta/Theta/Alpha/Beta/Gamma 분리`;
+  const ch = a.selected[0];
+  const source = a.filtered[ch] || [];
+  const pad = { l: 104, r: 20, t: 20, b: 36 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  drawAxes(ctx, pad.l, pad.t, pw, ph);
+  const colors = { Delta:"#64748b", Theta:"#0891b2", Alpha:"#0f766e", Beta:"#2563eb", Gamma:"#b42318" };
+  const names = Object.keys(bands);
+  names.forEach((name, idx) => {
+    const xs = bandSignal(source, a.fs, bands[name][0], Math.min(bands[name][1], a.fs / 2 - 1));
+    const laneH = ph / names.length;
+    const base = pad.t + laneH * (idx + 0.5);
+    const maxAbs = Math.max(...xs.map(v => Math.abs(v))) || 1;
+    ctx.strokeStyle = colors[name];
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    xs.forEach((v, i) => {
+      const x = pad.l + i / Math.max(1, xs.length - 1) * pw;
+      const y = base - (v / maxAbs) * laneH * 0.36;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = "#172033";
+    ctx.font = "11px Segoe UI";
+    ctx.textAlign = "right";
+    ctx.fillText(`${name} ${bands[name][0]}-${bands[name][1]}Hz`, pad.l - 10, base + 4);
+  });
+}
+
+function drawSpectral(ctx, w, h, a, mode) {
+  const curves = mode === "fft" ? a.ffts : a.psds;
+  $("plotTitle").textContent = mode === "fft" ? "FFT amplitude" : "Welch PSD";
+  const showIndividuals = $("showIndividualSpectra").checked;
+  $("plotSub").textContent = showIndividuals
+    ? `${a.selected.length}채널 개별 곡선 · filtered signal 기준`
+    : `${a.selected.length}채널 평균 곡선 · filtered signal 기준`;
+  const pad = { l: 62, r: 22, t: 24, b: 58 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  drawAxes(ctx, pad.l, pad.t, pw, ph);
+  const averageCurve = averageCurves(Object.values(curves));
+  const drawCurves = showIndividuals ? Object.values(curves) : [averageCurve];
+  const all = drawCurves.flat();
+  if (!all.length) {
+    drawEmpty(ctx, w, h, "스펙트럼을 그릴 샘플이 부족합니다.");
+    return;
+  }
+  const maxF = Math.min(Number($("maxFreqInput").value) || 45, a.fs / 2);
+  const normalize = $("normalizeSpectra").checked;
+  const curveToDb = curve => {
+    const raw = curve.map(d => 10 * Math.log10(Math.max(d.y, 1e-18)));
+    if (!normalize) return raw;
+    const peak = Math.max(...raw.filter(Number.isFinite));
+    return raw.map(v => v - peak);
+  };
+  const allDbCurves = drawCurves.map(curveToDb);
+  const dbValues = allDbCurves.flat().filter(Number.isFinite);
+  let minDb = Math.min(...dbValues);
+  let maxDb = Math.max(...dbValues);
+  if (!Number.isFinite(minDb) || !Number.isFinite(maxDb) || maxDb - minDb < 1e-6) {
+    minDb = -120;
+    maxDb = 0;
+  }
+  minDb = Math.max(minDb, maxDb - 80);
+  const colors = ["#2563eb", "#0f766e", "#b42318", "#7c3aed", "#ea580c", "#0891b2", "#4d7c0f", "#be185d"];
+  drawSpectralGrid(ctx, pad.l, pad.t, pw, ph, maxF, minDb, maxDb);
+  drawCurves.forEach((c, idx) => {
+    const dbCurve = allDbCurves[idx] || [];
+    ctx.strokeStyle = showIndividuals ? colors[idx % colors.length] : "#172033";
+    ctx.lineWidth = showIndividuals ? 0.8 : 2.2;
+    ctx.globalAlpha = showIndividuals ? 0.55 : 1;
+    ctx.beginPath();
+    c.forEach((d, i) => {
+      const x = pad.l + d.f / maxF * pw;
+      const db = dbCurve[i];
+      const y = pad.t + ph - ((db - minDb) / (maxDb - minDb)) * ph;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  drawBandGuides(ctx, pad.l, pad.t, pw, ph, true, maxF);
+  ctx.fillStyle = "#667085";
+  ctx.font = "11px Segoe UI";
+  ctx.textAlign = "center";
+  ctx.fillText("Frequency (Hz)", pad.l + pw / 2, h - 10);
+  ctx.save();
+  ctx.translate(14, pad.t + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(normalize ? "Power (dB from channel peak)" : "Power (dB)", 0, 0);
+  ctx.restore();
+}
+
+function drawBandGuides(ctx, x, y, w, h, spectral, maxF = 80) {
+  if (!spectral) return;
+  ctx.save();
+  ctx.globalAlpha = 0.12;
+  const fills = ["#64748b", "#0891b2", "#0f766e", "#2563eb", "#b42318"];
+  Object.entries(bands).forEach(([name, [lo, hi]], idx) => {
+    const bx = x + lo / maxF * w;
+    const bw = Math.max(1, (Math.min(hi, maxF) - lo) / maxF * w);
+    ctx.fillStyle = fills[idx];
+    ctx.fillRect(bx, y, bw, h);
+  });
+  ctx.restore();
+}
+
+function drawSpectralGrid(ctx, x, y, w, h, maxF, minDb, maxDb) {
+  ctx.save();
+  ctx.strokeStyle = "#eef2f6";
+  ctx.fillStyle = "#667085";
+  ctx.font = "10px Segoe UI";
+  ctx.textAlign = "center";
+  const freqTicks = [0, 4, 8, 13, 30, 45].filter(v => v <= maxF);
+  freqTicks.forEach(f => {
+    const px = x + f / maxF * w;
+    ctx.beginPath();
+    ctx.moveTo(px, y);
+    ctx.lineTo(px, y + h);
+    ctx.stroke();
+    ctx.fillText(String(f), px, y + h + 14);
+  });
+  ctx.font = "10px Segoe UI";
+  ctx.fillStyle = "#475467";
+  Object.entries(bands).forEach(([name, [lo, hi]]) => {
+    if (lo >= maxF) return;
+    const left = Math.max(0, lo);
+    const right = Math.min(hi, maxF);
+    const cx = x + ((left + right) / 2) / maxF * w;
+    ctx.fillText(name, cx, y + h + 29);
+  });
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 4; i++) {
+    const yy = y + h * i / 4;
+    const db = maxDb - (maxDb - minDb) * i / 4;
+    ctx.beginPath();
+    ctx.moveTo(x, yy);
+    ctx.lineTo(x + w, yy);
+    ctx.stroke();
+    ctx.fillText(db.toFixed(0), x - 6, yy + 3);
+  }
+  ctx.restore();
+}
+
+function drawCompare(ctx, w, h) {
+  buildCompare();
+  const c = state.compare;
+  $("plotTitle").textContent = "Condition Compare";
+  if (!c || !c.a.rows.length || !c.b.rows.length) {
+    $("plotSub").textContent = "조건 A/B를 선택하세요.";
+    drawEmpty(ctx, w, h, "비교할 조건 구간의 데이터가 부족합니다.");
+    return;
+  }
+  $("plotSub").textContent = `A ${c.condA.name} (${c.a.rows.length.toLocaleString()} samples) · B ${c.condB.name} (${c.b.rows.length.toLocaleString()} samples)`;
+  const pad = { l: 62, r: 22, t: 24, b: 58 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  drawAxes(ctx, pad.l, pad.t, pw, ph);
+  const maxF = Math.min(Number($("maxFreqInput").value) || 45, c.fs / 2);
+  const curves = [c.a.avgPsd, c.b.avgPsd];
+  const dbCurves = curves.map(curve => {
+    const raw = curve.map(d => 10 * Math.log10(Math.max(d.y, 1e-18)));
+    const peak = Math.max(...raw.filter(Number.isFinite));
+    return raw.map(v => $("normalizeSpectra").checked ? v - peak : v);
+  });
+  const vals = dbCurves.flat().filter(Number.isFinite);
+  let minDb = Math.min(...vals), maxDb = Math.max(...vals);
+  if (!Number.isFinite(minDb) || !Number.isFinite(maxDb) || maxDb - minDb < 1e-6) {
+    minDb = -80; maxDb = 0;
+  }
+  minDb = Math.max(minDb, maxDb - 80);
+  drawBandGuides(ctx, pad.l, pad.t, pw, ph, true, maxF);
+  drawSpectralGrid(ctx, pad.l, pad.t, pw, ph, maxF, minDb, maxDb);
+  ["#0f766e", "#b42318"].forEach((color, idx) => {
+    const curve = curves[idx];
+    const db = dbCurves[idx];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    curve.forEach((d, i) => {
+      const x = pad.l + d.f / maxF * pw;
+      const y = pad.t + ph - ((db[i] - minDb) / (maxDb - minDb)) * ph;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+  renderComparePowerBars(c);
+}
+
+function renderComparePowerBars(c) {
+  const el = $("powerBars");
+  el.innerHTML = "";
+  if (!c) {
+    renderPowerBars();
+    return;
+  }
+  for (const name of Object.keys(bands)) {
+    const a = c.a.powers[name] || 0;
+    const b = c.b.powers[name] || 0;
+    const ap = (a * 100).toFixed(1);
+    const bp = (b * 100).toFixed(1);
+    const tile = document.createElement("div");
+    tile.className = "powerCompareRow";
+    tile.innerHTML = `
+      <strong>${name}</strong>
+      <span class="compareBars">
+        <span class="compareLine"><span>A</span><span class="compareTrack"><i title="A ${ap}%" style="width:${ap}%;background:#0f766e"></i></span><span>${ap}%</span></span>
+        <span class="compareLine"><span>B</span><span class="compareTrack"><i title="B ${bp}%" style="width:${bp}%;background:#b42318"></i></span><span>${bp}%</span></span>
+      </span>`;
+    el.appendChild(tile);
+  }
+}
+
+async function handleFile(file) {
+  state.zip = null;
+  $("zipControls").classList.add("hidden");
+  $("zipEntry").disabled = true;
+  $("loadZipEntry").disabled = true;
+  if (file.name.toLowerCase().endsWith(".zip")) {
+    if (!window.JSZip) {
+      status("ZIP 지원 라이브러리를 불러오지 못했습니다. CSV로 압축을 푼 뒤 올려주세요.");
+      return;
+    }
+    state.zip = await JSZip.loadAsync(file);
+    const csvs = Object.keys(state.zip.files).filter(n => n.toLowerCase().endsWith(".csv"));
+    fillSelect($("zipEntry"), csvs, csvs[0]);
+    $("zipControls").classList.remove("hidden");
+    $("zipEntry").disabled = false;
+    $("loadZipEntry").disabled = false;
+    status(`${file.name}\nZIP 내부 CSV ${csvs.length}개 발견`);
+    if (csvs[0]) await loadZipEntry(csvs[0]);
+    return;
+  }
+  const text = await file.text();
+  const parsed = parseCsv(text);
+  loadDataset(parsed.headers, parsed.rows, file.name);
+  maybeAutoLoadLabels(file.name);
+}
+
+function extractClareParticipant(name) {
+  const m = String(name).match(/(?:^|[\\/])(\\d{4})(?:[\\/]|$)|^(\\d{4})[-_]?|eeg_(?:baseline|data_exp)_\\d+\\.csv/i);
+  if (m && (m[1] || m[2])) return m[1] || m[2];
+  const parts = String(name).split(/[\\/]/);
+  for (const p of parts) {
+    if (/^\\d{4}$/.test(p)) return p;
+  }
+  return "";
+}
+
+async function maybeAutoLoadLabels(sourceName) {
+  const participant = extractClareParticipant(sourceName);
+  if (!participant) return;
+  try {
+    const res = await fetch(`/api/clare-label?participant=${encodeURIComponent(participant)}`);
+    const json = await res.json();
+    if (!json.ok) return;
+    const parsed = parseCsv(json.csv);
+    state.labelHeaders = parsed.headers;
+    state.labelRows = parsed.rows;
+    buildConditions();
+    status(`${sourceName}\nCLARE 참가자 ${participant} 라벨 자동 로드: ${json.filename}\n조건 후보 ${state.conditions.length}개 생성`);
+  } catch {
+    // file:// open or an older server cannot auto-load labels; manual upload still works.
+  }
+}
+
+async function initClarePicker() {
+  try {
+    const res = await fetch("/api/clare-list");
+    const json = await res.json();
+    if (!json.ok) return;
+    state.clareItems = [];
+    json.participants.forEach(p => {
+      p.files.forEach(file => {
+        state.clareItems.push({ participant: p.id, file, label: `${p.id} / ${file}` });
+      });
+    });
+    fillSelect($("clarePick"), state.clareItems.map((_, i) => String(i)), "0", v => state.clareItems[Number(v)]?.label || "");
+  } catch {
+    fillSelect($("clarePick"), [], "");
+  }
+}
+
+async function loadClareSelected() {
+  const item = state.clareItems[Number($("clarePick").value)];
+  if (!item) {
+    status("CLARE 목록을 불러오지 못했습니다. http://127.0.0.1:8781/index.html 주소로 열었는지 확인하세요.");
+    return;
+  }
+  const res = await fetch(`/api/clare-eeg?participant=${encodeURIComponent(item.participant)}&file=${encodeURIComponent(item.file)}`);
+  const json = await res.json();
+  if (!json.ok) {
+    status(json.error || "CLARE EEG 파일을 열지 못했습니다.");
+    return;
+  }
+  const parsed = parseCsv(json.csv);
+  loadDataset(parsed.headers, parsed.rows, `${item.participant}/${item.file}`);
+  await maybeAutoLoadLabels(`${item.participant}/${item.file}`);
+}
+
+async function handleLabelFile(file) {
+  const text = await file.text();
+  const parsed = parseCsv(text);
+  state.labelHeaders = parsed.headers;
+  state.labelRows = parsed.rows;
+  buildConditions();
+  status(`${file.name}\n라벨 CSV ${state.labelRows.length}행 로드\n조건 후보 ${state.conditions.length}개 생성`);
+}
+
+async function handleCompareFile(file) {
+  const text = await file.text();
+  const parsed = parseCsv(text);
+  const headers = parsed.headers;
+  const rows = parsed.rows.filter(r => Object.values(r).some(Number.isFinite));
+  const channels = detectChannels(headers);
+  const timeCol = detectTimeColumn(headers);
+  const timeOptions = timeColumnOptions(headers);
+  const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
+  const fs = estimateFs(rows, selectedTime, Number($("fsInput").value) || 250);
+  state.compareDataset = { headers, rows, channels, timeCol: selectedTime, fs, sourceName: file.name };
+  const common = state.channels.filter(ch => channels.includes(ch));
+  if (common.length) {
+    state.selected = new Set(common.slice(0, Math.min(8, common.length)));
+    renderChannels();
+  }
+  buildCompare();
+  status(`${file.name}\n비교 파일 B 로드\n공통 EEG 채널 ${common.length}개, B fs 추정 ${fs} Hz`);
+  if (state.view === "compare") draw();
+}
+
+async function loadZipEntry(name) {
+  if (!state.zip || !name) return;
+  const text = await state.zip.file(name).async("text");
+  const parsed = parseCsv(text);
+  loadDataset(parsed.headers, parsed.rows, name);
+  maybeAutoLoadLabels(name);
+}
+
+function loadDemoClean() {
+  const fs = 250, seconds = 12;
+  const headers = ["participant","trialNumber","sessionTime","trialTime","EEG_AF3","EEG_AF4","EEG_Cz","EEG_O1","EEG_O2","contArousal"];
+  const rows = [];
+  for (let i = 0; i < fs * seconds; i++) {
+    const t = i / fs;
+    rows.push({
+      participant: 1,
+      trialNumber: 1,
+      sessionTime: 10 + t,
+      trialTime: t,
+      EEG_AF3: 20 * Math.sin(2 * Math.PI * 10 * t) + 8 * Math.sin(2 * Math.PI * 4 * t) + Math.random() * 6,
+      EEG_AF4: 18 * Math.sin(2 * Math.PI * 11 * t) + 5 * Math.sin(2 * Math.PI * 22 * t) + Math.random() * 6,
+      EEG_Cz: 14 * Math.sin(2 * Math.PI * 6 * t) + Math.random() * 8,
+      EEG_O1: 30 * Math.sin(2 * Math.PI * 9.5 * t) + Math.random() * 5,
+      EEG_O2: 28 * Math.sin(2 * Math.PI * 10.5 * t) + Math.random() * 5,
+      contArousal: 45 + 30 * Math.sin(2 * Math.PI * 0.05 * t)
+    });
+  }
+  state.demoLoaded = true;
+  loadDataset(headers, rows, "synthetic clean-style EEG");
+  status("예시 데이터가 로드되었습니다.\n이 채널명과 samples/fs는 실제 장비 설정이 아니라 GUI 동작 확인용 가상 데이터입니다.");
+}
+
+async function connectSerial() {
+  if (!("serial" in navigator)) {
+    status("이 브라우저는 Web Serial을 지원하지 않습니다. Chrome/Edge와 localhost가 필요합니다.");
+    return;
+  }
+  const port = await navigator.serial.requestPort();
+  await port.open({ baudRate: Number($("baudRate").value) || 115200 });
+  status("USB Serial 연결됨. CSV header와 data line을 기다리는 중...");
+  const decoder = new TextDecoderStream();
+  port.readable.pipeTo(decoder.writable);
+  readTextStream(decoder.readable.getReader(), "USB Serial");
+}
+
+async function connectBle() {
+  if (!("bluetooth" in navigator)) {
+    status("이 브라우저는 Web Bluetooth를 지원하지 않습니다. Chrome/Edge와 localhost가 필요합니다.");
+    return;
+  }
+  const service = $("bleService").value.trim();
+  const characteristic = $("bleChar").value.trim();
+  const rxCharacteristic = $("bleRxChar").value.trim();
+  if (!service || !characteristic) {
+    status("BLE service UUID와 characteristic UUID를 입력하세요.");
+    return;
+  }
+  status("BLE 장치 선택창을 여는 중입니다. ADS1299_NRF54를 선택하세요.");
+  const device = await navigator.bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: [service]
+  });
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(service);
+  const ch = await svc.getCharacteristic(characteristic);
+  await ch.startNotifications();
+  ch.addEventListener("characteristicvaluechanged", e => {
+    const text = new TextDecoder().decode(e.target.value);
+    appendStreamText(text, `BLE ${device.name || ""}`.trim());
+  });
+  state.bleDevice = device;
+  state.bleTxCharacteristic = ch;
+  state.bleRxCharacteristic = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
+  status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
+}
+
+async function sendAds1299Command(command) {
+  if (!state.bleRxCharacteristic) {
+    status("BLE write characteristic이 아직 연결되지 않았습니다. 먼저 BLE 버튼으로 연결하세요.");
+    return;
+  }
+  const line = command.trim();
+  if (!line) return;
+  await state.bleRxCharacteristic.writeValue(new TextEncoder().encode(`${line}\n`));
+  status(`명령 전송됨:\n${line}`);
+}
+
+async function readTextStream(reader, source) {
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop();
+    lines.forEach(line => appendStreamLine(line, source));
+  }
+}
+
+function appendStreamText(text, source) {
+  appendStreamText.buffer = (appendStreamText.buffer || "") + text;
+  const lines = appendStreamText.buffer.split(/\r?\n/);
+  appendStreamText.buffer = lines.pop();
+  lines.forEach(line => appendStreamLine(line, source));
+}
+
+function appendStreamLine(line, source) {
+  if (!line.trim()) return;
+  const cells = line.split(",").map(s => s.trim());
+  const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
+  if (/^(OK|ERR|REG)\b/i.test(line.trim())) {
+    status(`${source}\n${line.trim()}`);
+    return;
+  }
+  if (!state.streamHeaders && allNumeric) {
+    state.streamHeaders = ["t_ms", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
+    state.streamRows = [];
+    status(`${source}\nADS1299 numeric stream: ${state.streamHeaders.join(", ")}`);
+  } else if (!state.streamHeaders || !allNumeric) {
+    state.streamHeaders = cells;
+    state.streamRows = [];
+    status(`${source}\nheader: ${cells.join(", ")}`);
+    return;
+  }
+  const obj = {};
+  state.streamHeaders.forEach((h, i) => obj[h] = Number.parseFloat(cells[i]));
+  state.streamRows.push(obj);
+  if (state.streamRows.length > 30000) state.streamRows.splice(0, state.streamRows.length - 30000);
+  if (state.streamRows.length % 25 === 0) {
+    loadDataset(state.streamHeaders, state.streamRows.slice(), source);
+  }
+}
+
+function exportSummary() {
+  const a = state.lastAnalysis;
+  if (!a) return;
+  const rows = [["band","relative_power"]];
+  Object.entries(a.powers).forEach(([k, v]) => rows.push([k, v]));
+  const blob = new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "eeg_relative_power_summary.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+$("fileInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (file) handleFile(file).catch(err => status(String(err.stack || err)));
+});
+$("labelInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (file) handleLabelFile(file).catch(err => status(String(err.stack || err)));
+});
+$("compareFileInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (file) handleCompareFile(file).catch(err => status(String(err.stack || err)));
+});
+$("loadZipEntry").addEventListener("click", () => loadZipEntry($("zipEntry").value));
+$("loadClareBtn").addEventListener("click", () => loadClareSelected().catch(err => status(String(err.stack || err))));
+$("applyBtn").addEventListener("click", analyze);
+$("exportBtn").addEventListener("click", exportSummary);
+$("compareBtn").addEventListener("click", () => {
+  state.view = "compare";
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === "compare"));
+  buildCompare();
+  renderComparePowerBars(state.compare);
+  draw();
+});
+$("conditionA").addEventListener("change", () => {
+  if (state.view === "compare") {
+    buildCompare();
+    draw();
+  }
+});
+$("conditionB").addEventListener("change", () => {
+  if (state.view === "compare") {
+    buildCompare();
+    draw();
+  }
+});
+$("serialBtn").addEventListener("click", () => connectSerial().catch(err => status(String(err.stack || err))));
+$("bleBtn").addEventListener("click", () => connectBle().catch(err => status(String(err.stack || err))));
+$("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
+$("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
+$("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));
+$("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
+$("adsTestBtn").addEventListener("click", () => sendAds1299Command("ADS1299 CONFIG RATE=250 GAIN=24 MUX=TEST REF=SRB1 BIAS=ON LOFF=OFF TEST=ON").catch(err => status(String(err.stack || err))));
+$("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
+$("adsSendBtn").addEventListener("click", () => sendAds1299Command($("adsCommand").value).catch(err => status(String(err.stack || err))));
+
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.view = btn.dataset.view;
+    if (state.view === "compare") buildCompare();
+    draw();
+  });
+});
+
+["timeColumn","fsInput","startSec","durationSec","hpInput","lpInput","notchInput","maxFreqInput","showIndividualSpectra","normalizeSpectra","hpOn","lpOn","notchOn","detrendOn"].forEach(id => {
+  $(id).addEventListener("change", analyze);
+});
+
+$("selectAll").addEventListener("click", () => { state.selected = new Set(state.channels); renderChannels(); analyze(); });
+$("clearChannels").addEventListener("click", () => { state.selected = new Set(); renderChannels(); analyze(); });
+
+function channelCoreName(ch) {
+  return String(ch).replace(/^EEG_/i, "").replace(/^RAW_/i, "").toUpperCase();
+}
+
+function selectRegion(pattern) {
+  state.selected = new Set(state.channels.filter(ch => pattern.test(channelCoreName(ch))));
+  renderChannels(); analyze();
+}
+
+$("selectFrontal").addEventListener("click", () => {
+  selectRegion(/^(FP|AF|F|FC)/);
+});
+$("selectCentral").addEventListener("click", () => {
+  selectRegion(/^(C|CZ|CP)/);
+});
+$("selectTemporal").addEventListener("click", () => {
+  selectRegion(/^(T|FT|TP)/);
+});
+$("selectParietal").addEventListener("click", () => {
+  selectRegion(/^(P|PO)/);
+});
+$("selectOccipital").addEventListener("click", () => {
+  selectRegion(/^(O|OZ|IZ)/);
+});
+window.addEventListener("resize", draw);
+
+updateMetrics();
+renderPowerBars();
+draw();
+initClarePicker();
+</script>
+</body>
+</html>

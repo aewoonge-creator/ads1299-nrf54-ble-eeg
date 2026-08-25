@@ -20,7 +20,7 @@ nRF54L15 / nRF54L19
   - BLE Nordic UART style GATT service
         |
         v
-Python GUI
+Web GUI or Python GUI
   - ADS1299 control panel
   - live plot
   - CSV recording
@@ -42,13 +42,19 @@ firmware/nrf54_ads1299_ble/
 
 pc_gui/
   README.md
+
+docs/
+  index.html
 ```
 
-현재 PC GUI 구현은 기존 작업 폴더의 Python GUI를 사용합니다.
+## One-click Web GUI
 
-```text
-C:\Users\GC\OneDrive - 가천대학교\문서\애웅이\work\ads1299_ble_python_gui
-```
+GitHub Pages를 켜면 노트북에서 아래 주소 하나로 GUI를 열 수 있습니다.
+
+https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/
+
+Web Bluetooth는 HTTPS 또는 localhost에서만 안정적으로 동작하므로, 다른 노트북에서는
+GitHub Pages 방식이 가장 간단합니다.
 
 ## BLE Text Protocol
 
@@ -94,4 +100,3 @@ USB 전원 또는 외부 어댑터를 그대로 인체 연결 회로에 쓰지 �
 
 - Original concept reference: https://github.com/lukaszmargielewski/EEG_BLE
 - ADS1299 device family: Texas Instruments ADS1299
-
