@@ -235,6 +235,68 @@
       white-space: pre-wrap;
     }
 
+    .adsTableWrap,
+    .regTableWrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      margin-top: 8px;
+    }
+
+    .adsChannelTable,
+    .regMapTable {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 620px;
+    }
+
+    .adsChannelTable th,
+    .adsChannelTable td,
+    .regMapTable th,
+    .regMapTable td {
+      border-bottom: 1px solid #e3e8f0;
+      padding: 6px;
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    .adsChannelTable th,
+    .regMapTable th {
+      background: #f8fafc;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .adsChannelTable tr:last-child td,
+    .regMapTable tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .adsChannelTable select {
+      min-width: 86px;
+      padding: 5px 6px;
+    }
+
+    .adsChannelTable input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .regValue {
+      font-family: Consolas, monospace;
+      font-weight: 700;
+    }
+
+    .regHint {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: normal;
+    }
+
     .workspace {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 340px;
@@ -730,10 +792,45 @@
       <button id="adsApplyConfigBtn">Apply Config</button>
       <button id="adsApplyChannelsBtn">Apply Channels</button>
     </div>
+    <h2>채널별 설정</h2>
+    <div class="adsTableWrap">
+      <table class="adsChannelTable">
+        <thead>
+          <tr>
+            <th>CH</th>
+            <th>사용</th>
+            <th>Power down</th>
+            <th>Gain</th>
+            <th>MUX</th>
+            <th>BIAS +</th>
+            <th>BIAS -</th>
+            <th>CHnSET</th>
+          </tr>
+        </thead>
+        <tbody id="adsChannelConfig"></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="adsCopyGlobalBtn">전체 설정 복사</button>
+      <button id="adsApplyChannelTableBtn" class="secondary">채널 설정 적용</button>
+    </div>
     </div>
 
     <div class="controlGroup">
     <h2>3. Register Map</h2>
+    <div class="regTableWrap">
+      <table class="regMapTable">
+        <thead>
+          <tr>
+            <th>Addr</th>
+            <th>Name</th>
+            <th>Value</th>
+            <th>역할</th>
+          </tr>
+        </thead>
+        <tbody id="adsRegisterMap"></tbody>
+      </table>
+    </div>
     <div class="row">
       <div>
         <label for="adsRegAddr">Register</label>
@@ -918,6 +1015,37 @@ const state = {
   eventLog: []
 };
 
+const adsRegisters = [
+  { addr: 0x00, name: "ID", role: "Device ID 확인" },
+  { addr: 0x01, name: "CONFIG1", role: "Daisy-chain, clock, SPS" },
+  { addr: 0x02, name: "CONFIG2", role: "내부 test signal 설정" },
+  { addr: 0x03, name: "CONFIG3", role: "Reference buffer, BIAS 설정" },
+  { addr: 0x04, name: "LOFF", role: "Lead-off 전류/검출 조건" },
+  { addr: 0x05, name: "CH1SET", role: "CH1 power/gain/mux" },
+  { addr: 0x06, name: "CH2SET", role: "CH2 power/gain/mux" },
+  { addr: 0x07, name: "CH3SET", role: "CH3 power/gain/mux" },
+  { addr: 0x08, name: "CH4SET", role: "CH4 power/gain/mux" },
+  { addr: 0x09, name: "CH5SET", role: "CH5 power/gain/mux" },
+  { addr: 0x0A, name: "CH6SET", role: "CH6 power/gain/mux" },
+  { addr: 0x0B, name: "CH7SET", role: "CH7 power/gain/mux" },
+  { addr: 0x0C, name: "CH8SET", role: "CH8 power/gain/mux" },
+  { addr: 0x0D, name: "BIAS_SENSP", role: "BIAS에 포함할 P 입력 채널" },
+  { addr: 0x0E, name: "BIAS_SENSN", role: "BIAS에 포함할 N 입력 채널" },
+  { addr: 0x0F, name: "LOFF_SENSP", role: "Lead-off P 감지 채널" },
+  { addr: 0x10, name: "LOFF_SENSN", role: "Lead-off N 감지 채널" },
+  { addr: 0x11, name: "LOFF_FLIP", role: "Lead-off 전류 방향" },
+  { addr: 0x12, name: "LOFF_STATP", role: "P lead-off 상태 읽기" },
+  { addr: 0x13, name: "LOFF_STATN", role: "N lead-off 상태 읽기" },
+  { addr: 0x14, name: "GPIO", role: "GPIO 상태/제어" },
+  { addr: 0x15, name: "MISC1", role: "SRB1 공통 reference" },
+  { addr: 0x16, name: "MISC2", role: "Reserved" },
+  { addr: 0x17, name: "CONFIG4", role: "Lead-off comparator 등" }
+];
+
+const adsRegisterValues = {};
+const adsGainBits = { "1": 0b000, "2": 0b001, "4": 0b010, "6": 0b011, "8": 0b100, "12": 0b101, "24": 0b110 };
+const adsMuxBits = { NORMAL: 0b000, SHORTED: 0b001, BIAS_MEAS: 0b010, MVDD: 0b011, TEMP: 0b100, TEST: 0b101, BIAS_DRP: 0b110, BIAS_DRN: 0b111 };
+
 const bands = {
   Delta: [1, 4],
   Theta: [4, 8],
@@ -937,6 +1065,139 @@ function status(msg) {
 function setText(id, value) {
   const el = $(id);
   if (el) el.textContent = value;
+}
+
+function hexByte(value) {
+  return `0x${(value & 0xff).toString(16).toUpperCase().padStart(2, "0")}`;
+}
+
+function hexAddr(value) {
+  return `0x${(value & 0xff).toString(16).toUpperCase().padStart(2, "0")}`;
+}
+
+function selectHtml(options, selected) {
+  return options.map(v => `<option value="${v}"${String(v) === String(selected) ? " selected" : ""}>${v}</option>`).join("");
+}
+
+function renderAdsChannelConfig() {
+  const body = $("adsChannelConfig");
+  if (!body) return;
+  const gains = ["24", "12", "8", "6", "4", "2", "1"];
+  const muxes = ["NORMAL", "SHORTED", "TEST", "BIAS_MEAS", "MVDD", "TEMP"];
+  body.innerHTML = Array.from({ length: 8 }, (_, i) => {
+    const ch = i + 1;
+    return `
+      <tr data-ads-ch="${ch}">
+        <td><strong>CH${ch}</strong></td>
+        <td><input class="ads-ch-enable" type="checkbox" checked aria-label="CH${ch} enable"></td>
+        <td><input class="ads-ch-pd" type="checkbox" aria-label="CH${ch} power down"></td>
+        <td><select class="ads-ch-gain" aria-label="CH${ch} gain">${selectHtml(gains, "24")}</select></td>
+        <td><select class="ads-ch-mux" aria-label="CH${ch} mux">${selectHtml(muxes, "NORMAL")}</select></td>
+        <td><input class="ads-ch-biasp" type="checkbox" checked aria-label="CH${ch} BIAS positive"></td>
+        <td><input class="ads-ch-biasn" type="checkbox" checked aria-label="CH${ch} BIAS negative"></td>
+        <td class="regValue ads-ch-value">0x60</td>
+      </tr>
+    `;
+  }).join("");
+  body.querySelectorAll("input, select").forEach(el => el.addEventListener("change", updateAdsChannelPreview));
+  updateAdsChannelPreview();
+}
+
+function adsChannelRows() {
+  return [...document.querySelectorAll("[data-ads-ch]")];
+}
+
+function chSetValue(row) {
+  const enabled = row.querySelector(".ads-ch-enable").checked;
+  const powerDown = row.querySelector(".ads-ch-pd").checked || !enabled;
+  const gain = row.querySelector(".ads-ch-gain").value;
+  const mux = row.querySelector(".ads-ch-mux").value;
+  return (powerDown ? 0x80 : 0) | ((adsGainBits[gain] ?? 0b110) << 4) | (adsMuxBits[mux] ?? 0);
+}
+
+function updateAdsChannelPreview() {
+  adsChannelRows().forEach(row => {
+    row.querySelector(".ads-ch-value").textContent = hexByte(chSetValue(row));
+  });
+  updateRegisterPreviewFromChannelTable();
+}
+
+function updateRegisterPreviewFromChannelTable() {
+  adsChannelRows().forEach((row, idx) => {
+    adsRegisterValues[0x05 + idx] = chSetValue(row);
+  });
+  adsRegisterValues[0x0D] = biasMask(".ads-ch-biasp");
+  adsRegisterValues[0x0E] = biasMask(".ads-ch-biasn");
+  renderAdsRegisterMap();
+}
+
+function biasMask(selector) {
+  return adsChannelRows().reduce((mask, row, idx) => row.querySelector(selector).checked ? mask | (1 << idx) : mask, 0);
+}
+
+function copyGlobalAdsSettingsToChannels() {
+  const gain = $("adsGain").value;
+  const mux = $("adsMux").value;
+  const enabledSet = new Set(String($("adsChannels").value).split(",").map(v => Number(v.trim())).filter(v => v >= 1 && v <= 8));
+  adsChannelRows().forEach(row => {
+    const ch = Number(row.dataset.adsCh);
+    row.querySelector(".ads-ch-enable").checked = enabledSet.has(ch);
+    row.querySelector(".ads-ch-pd").checked = !enabledSet.has(ch);
+    row.querySelector(".ads-ch-gain").value = gain;
+    row.querySelector(".ads-ch-mux").value = adsMuxBits[mux] === undefined ? "NORMAL" : mux;
+    row.querySelector(".ads-ch-biasp").checked = $("adsBiasOn").checked;
+    row.querySelector(".ads-ch-biasn").checked = $("adsBiasOn").checked;
+  });
+  updateAdsChannelPreview();
+}
+
+function adsChannelTableCommands() {
+  updateAdsChannelPreview();
+  const commands = adsChannelRows().map((row, idx) => `ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte(chSetValue(row))}`);
+  commands.push(`ADS1299 WREG 0x0D ${hexByte(biasMask(".ads-ch-biasp"))}`);
+  commands.push(`ADS1299 WREG 0x0E ${hexByte(biasMask(".ads-ch-biasn"))}`);
+  return commands;
+}
+
+function renderAdsRegisterMap() {
+  const body = $("adsRegisterMap");
+  if (!body) return;
+  body.innerHTML = adsRegisters.map(reg => {
+    const value = adsRegisterValues[reg.addr];
+    return `
+      <tr>
+        <td class="regValue">${hexAddr(reg.addr)}</td>
+        <td><strong>${reg.name}</strong></td>
+        <td class="regValue">${Number.isFinite(value) ? hexByte(value) : "--"}</td>
+        <td class="regHint">${reg.role}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function rememberManualRegisterWrite(addrText, valueText) {
+  const addr = Number.parseInt(String(addrText).replace(/^0x/i, ""), 16);
+  const value = Number.parseInt(String(valueText).replace(/^0x/i, ""), 16);
+  if (Number.isFinite(addr) && Number.isFinite(value)) {
+    adsRegisterValues[addr] = value;
+    renderAdsRegisterMap();
+  }
+}
+
+function updateAdsRegisterValueFromLine(line) {
+  const text = String(line).trim();
+  if (!/^REG\b/i.test(text)) return;
+  const pairs = [...text.matchAll(/(?:0x)?([0-9a-f]{1,2})\s*[:= ]\s*(?:0x)?([0-9a-f]{1,2})/gi)];
+  pairs.forEach(match => {
+    const addr = Number.parseInt(match[1], 16);
+    const value = Number.parseInt(match[2], 16);
+    if (Number.isFinite(addr) && Number.isFinite(value)) adsRegisterValues[addr] = value;
+  });
+  adsRegisters.forEach(reg => {
+    const byName = new RegExp(`${reg.name}\\s*[:=]\\s*(?:0x)?([0-9a-f]{1,2})`, "i").exec(text);
+    if (byName) adsRegisterValues[reg.addr] = Number.parseInt(byName[1], 16);
+  });
+  renderAdsRegisterMap();
 }
 
 function appendLog(msg) {
@@ -2159,6 +2420,22 @@ async function sendAds1299Command(command) {
   status(`명령 전송됨:\n${line}`);
 }
 
+async function sendAds1299Commands(commands) {
+  const lines = commands.map(v => String(v).trim()).filter(Boolean);
+  if (!lines.length) return;
+  if (!state.bleRxCharacteristic) {
+    status("BLE write characteristic이 아직 연결되지 않았습니다. 먼저 BLE 버튼으로 연결하세요.");
+    return;
+  }
+  setText("cmdState", "전송 중");
+  for (const line of lines) {
+    await state.bleRxCharacteristic.writeValue(new TextEncoder().encode(`${line}\n`));
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  setText("cmdState", "준비됨");
+  status(`명령 ${lines.length}개 전송됨:\n${lines.join("\n")}`);
+}
+
 function adsConfigCommand() {
   return [
     "ADS1299 CONFIG",
@@ -2203,6 +2480,7 @@ function appendStreamLine(line, source) {
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
   if (/^(OK|ERR|REG|RX|PONG)\b/i.test(line.trim())) {
+    updateAdsRegisterValueFromLine(line);
     status(`${source}\n${line.trim()}`);
     return;
   }
@@ -2308,8 +2586,16 @@ $("adsTestBtn").addEventListener("click", () => sendAds1299Command("ADS1299 CONF
 $("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => sendAds1299Command(adsConfigCommand()).catch(err => status(String(err.stack || err))));
 $("adsApplyChannelsBtn").addEventListener("click", () => sendAds1299Command(adsChannelsCommand()).catch(err => status(String(err.stack || err))));
+$("adsCopyGlobalBtn").addEventListener("click", () => {
+  copyGlobalAdsSettingsToChannels();
+  status("전역 ADS1299 설정을 채널별 표에 복사했습니다.");
+});
+$("adsApplyChannelTableBtn").addEventListener("click", () => sendAds1299Commands(adsChannelTableCommands()).catch(err => status(String(err.stack || err))));
 $("adsReadRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 RREG ${$("adsRegAddr").value.trim()}`).catch(err => status(String(err.stack || err))));
-$("adsWriteRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 WREG ${$("adsRegAddr").value.trim()} ${$("adsRegValue").value.trim()}`).catch(err => status(String(err.stack || err))));
+$("adsWriteRegBtn").addEventListener("click", () => {
+  rememberManualRegisterWrite($("adsRegAddr").value.trim(), $("adsRegValue").value.trim());
+  sendAds1299Command(`ADS1299 WREG ${$("adsRegAddr").value.trim()} ${$("adsRegValue").value.trim()}`).catch(err => status(String(err.stack || err)));
+});
 $("adsSendBtn").addEventListener("click", () => sendAds1299Command($("adsCommand").value).catch(err => status(String(err.stack || err))));
 $("csvDownloadBtn").addEventListener("click", downloadStreamCsv);
 
@@ -2325,6 +2611,10 @@ document.querySelectorAll(".tab").forEach(btn => {
 
 ["timeColumn","fsInput","startSec","durationSec","hpInput","lpInput","notchInput","maxFreqInput","showIndividualSpectra","normalizeSpectra","hpOn","lpOn","notchOn","detrendOn"].forEach(id => {
   $(id).addEventListener("change", analyze);
+});
+
+["adsGain","adsMux","adsChannels","adsBiasOn"].forEach(id => {
+  $(id).addEventListener("change", updateAdsChannelPreview);
 });
 
 $("selectAll").addEventListener("click", () => { state.selected = new Set(state.channels); renderChannels(); analyze(); });
@@ -2356,6 +2646,8 @@ $("selectOccipital").addEventListener("click", () => {
 });
 window.addEventListener("resize", draw);
 
+renderAdsChannelConfig();
+renderAdsRegisterMap();
 updateMetrics();
 renderPowerBars();
 draw();
