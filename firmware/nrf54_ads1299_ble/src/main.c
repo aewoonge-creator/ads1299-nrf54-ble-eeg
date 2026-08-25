@@ -112,14 +112,30 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 
 static void ble_send_line(const char *line)
 {
-	if (!current_conn || !tx_notify_enabled) {
+	int err;
+
+	if (!current_conn) {
 		return;
 	}
-	bt_gatt_notify(current_conn, &uart_service.attrs[4], line, strlen(line));
+
+	err = bt_gatt_notify(current_conn, &uart_service.attrs[4], line, strlen(line));
+	if (err) {
+		LOG_WRN("Notify failed: %d", err);
+	}
 }
 
 static void handle_ads1299_command(const char *command)
 {
+	char ack[180];
+
+	snprintk(ack, sizeof(ack), "RX %s\n", command);
+	ble_send_line(ack);
+
+	if (strcmp(command, "PING") == 0) {
+		ble_send_line("PONG\n");
+		return;
+	}
+
 	if (strcmp(command, "ADS1299 INIT") == 0) {
 		int err = ads1299_init_device();
 		ble_send_line(err == 0 ? "OK INIT\n" : "ERR INIT\n");
