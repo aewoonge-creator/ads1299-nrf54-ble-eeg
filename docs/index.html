@@ -817,37 +817,39 @@
     </div>
 
     <div class="controlGroup">
-    <h2>3. Register Map</h2>
-    <div class="regTableWrap">
-      <table class="regMapTable">
-        <thead>
-          <tr>
-            <th>Addr</th>
-            <th>Name</th>
-            <th>Value</th>
-            <th>역할</th>
-          </tr>
-        </thead>
-        <tbody id="adsRegisterMap"></tbody>
-      </table>
-    </div>
-    <div class="row">
-      <div>
-        <label for="adsRegAddr">Register</label>
-        <input id="adsRegAddr" type="text" value="0x00">
-      </div>
-      <div>
-        <label for="adsRegValue">Value</label>
-        <input id="adsRegValue" type="text" value="0x00">
-      </div>
-    </div>
-    <div class="row">
-      <button id="adsReadRegBtn">Read Register</button>
-      <button id="adsWriteRegBtn">Write Register</button>
-    </div>
-    <label for="adsCommand">Custom command</label>
-    <input id="adsCommand" type="text" value="ADS1299 RREG ID">
-    <button id="adsSendBtn">Send Command</button>
+      <details>
+        <summary><strong>3. Register Map</strong></summary>
+        <div class="regTableWrap">
+          <table class="regMapTable">
+            <thead>
+              <tr>
+                <th>Addr</th>
+                <th>Name</th>
+                <th>Value</th>
+                <th>역할</th>
+              </tr>
+            </thead>
+            <tbody id="adsRegisterMap"></tbody>
+          </table>
+        </div>
+        <div class="row">
+          <div>
+            <label for="adsRegAddr">Register</label>
+            <input id="adsRegAddr" type="text" value="0x00">
+          </div>
+          <div>
+            <label for="adsRegValue">Value</label>
+            <input id="adsRegValue" type="text" value="0x00">
+          </div>
+        </div>
+        <div class="row">
+          <button id="adsReadRegBtn">Read Register</button>
+          <button id="adsWriteRegBtn">Write Register</button>
+        </div>
+        <label for="adsCommand">Custom command</label>
+        <input id="adsCommand" type="text" value="ADS1299 RREG ID">
+        <button id="adsSendBtn">Send Command</button>
+      </details>
     </div>
 
     <div class="controlGroup">
