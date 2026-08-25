@@ -1,0 +1,60 @@
+/*
+ * Example ADS1299 wiring for nRF54L15 DK.
+ *
+ * Change these P1.xx values if your jumper wiring is different.
+ *
+ * ADS1299 SCLK  -> nRF P1.08
+ * ADS1299 DIN   -> nRF P1.09  (MOSI)
+ * ADS1299 DOUT  -> nRF P1.11  (MISO)
+ * ADS1299 CS    -> nRF P1.12
+ * ADS1299 DRDY  -> nRF P1.13
+ * ADS1299 RESET -> nRF P1.14
+ * ADS1299 START -> nRF P1.15
+ * GND           -> GND
+ * DVDD level must match the nRF GPIO voltage domain.
+ */
+
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+/ {
+	ads1299_control: ads1299-control {
+		compatible = "ti,ads1299-control";
+		drdy-gpios = <&gpio1 13 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpio1 14 GPIO_ACTIVE_LOW>;
+		start-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&pinctrl {
+	spi21_ads1299_default: spi21_ads1299_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 8)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 9)>,
+				<NRF_PSEL(SPIM_MISO, 1, 11)>;
+		};
+	};
+
+	spi21_ads1299_sleep: spi21_ads1299_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 8)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 9)>,
+				<NRF_PSEL(SPIM_MISO, 1, 11)>;
+			low-power-enable;
+		};
+	};
+};
+
+&spi21 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	cs-gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&spi21_ads1299_default>;
+	pinctrl-1 = <&spi21_ads1299_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	ads1299: ads1299@0 {
+		compatible = "ti,ads1299";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+	};
+};

@@ -1,0 +1,6 @@
+description: TI ADS1299 EEG analog front-end on SPI
+
+compatible: "ti,ads1299"
+
+include: spi-device.yaml
+

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Python GUI output
+*.csv
+
+# Zephyr / NCS build outputs
+build/
+twister-out/
+.west/
+zephyr/.config
+zephyr/include/generated/
+zephyr/zephyr.*
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+

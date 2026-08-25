@@ -1,0 +1,20 @@
+description: Control GPIOs for TI ADS1299 EEG analog front-end
+
+compatible: "ti,ads1299-control"
+
+properties:
+  drdy-gpios:
+    type: phandle-array
+    required: true
+    description: ADS1299 DRDY input, active low
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: ADS1299 RESET output, active low
+
+  start-gpios:
+    type: phandle-array
+    required: true
+    description: ADS1299 START output, active high
+
