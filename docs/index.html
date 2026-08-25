@@ -178,6 +178,60 @@
       white-space: pre-wrap;
     }
 
+    .controlGroup {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 10px;
+      background: #fbfcff;
+    }
+
+    .controlGroup h2 {
+      margin-top: 0;
+    }
+
+    .statusGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .statusCard {
+      min-height: 54px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      background: #fff;
+    }
+
+    .statusCard strong {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .statusCard span {
+      font-weight: 750;
+      font-size: 14px;
+    }
+
+    .logBox {
+      height: 120px;
+      overflow: auto;
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #101828;
+      color: #e6edf7;
+      font-family: Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
     .workspace {
       display: grid;
       grid-template-rows: auto 1fr;
@@ -487,33 +541,43 @@
     </div>
     <button id="compareBtn" class="secondary">조건 비교</button>
 
-    <h2>통신</h2>
-    <div class="row">
-      <button id="serialBtn" class="primary">USB Serial</button>
-      <button id="bleBtn" class="primary">BLE</button>
+    <div class="controlGroup">
+      <h2>1. 연결 상태</h2>
+      <div class="statusGrid">
+        <div class="statusCard"><strong>BLE</strong><span id="bleState">대기</span></div>
+        <div class="statusCard"><strong>명령</strong><span id="cmdState">미연결</span></div>
+        <div class="statusCard"><strong>수신 Hz</strong><span id="rxHz">0</span></div>
+        <div class="statusCard"><strong>샘플</strong><span id="sampleCount">0</span></div>
+      </div>
+      <div class="row">
+        <button id="serialBtn" class="primary">USB Serial</button>
+        <button id="bleBtn" class="primary">BLE</button>
+      </div>
+      <button id="adsPingBtn">PING 테스트</button>
+      <label for="baudRate">Serial baud</label>
+      <input id="baudRate" type="number" min="1200" step="100" value="115200">
+      <label for="bleService">BLE service UUID</label>
+      <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
+      <label for="bleChar">BLE notify characteristic UUID</label>
+      <input id="bleChar" type="text" value="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
+      <label for="bleRxChar">BLE write characteristic UUID</label>
+      <input id="bleRxChar" type="text" value="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
     </div>
-    <label for="baudRate">Serial baud</label>
-    <input id="baudRate" type="number" min="1200" step="100" value="115200">
-    <label for="bleService">BLE service UUID</label>
-    <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
-    <label for="bleChar">BLE notify characteristic UUID</label>
-    <input id="bleChar" type="text" value="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
-    <label for="bleRxChar">BLE write characteristic UUID</label>
-    <input id="bleRxChar" type="text" value="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
 
-    <h2>ADS1299 제어</h2>
-    <div class="row">
-      <button id="adsInitBtn">Init</button>
-      <button id="adsReadIdBtn">Read ID</button>
-    </div>
-    <div class="row">
-      <button id="adsStartBtn" class="primary">Start</button>
-      <button id="adsStopBtn">Stop</button>
-    </div>
-    <div class="row">
-      <button id="adsTestBtn">Test Signal</button>
-      <button id="adsRegBtn">Read Regs</button>
-    </div>
+    <div class="controlGroup">
+      <h2>2. ADS1299 제어</h2>
+      <div class="row">
+        <button id="adsInitBtn">Init</button>
+        <button id="adsReadIdBtn">Read ID</button>
+      </div>
+      <div class="row">
+        <button id="adsStartBtn" class="primary">Start</button>
+        <button id="adsStopBtn">Stop</button>
+      </div>
+      <div class="row">
+        <button id="adsTestBtn">Test Signal</button>
+        <button id="adsRegBtn">Read Regs</button>
+      </div>
     <div class="triple">
       <div>
         <label for="adsRate">SPS</label>
@@ -575,7 +639,10 @@
       <button id="adsApplyConfigBtn">Apply Config</button>
       <button id="adsApplyChannelsBtn">Apply Channels</button>
     </div>
-    <h2>Register Map</h2>
+    </div>
+
+    <div class="controlGroup">
+    <h2>3. Register Map</h2>
     <div class="row">
       <div>
         <label for="adsRegAddr">Register</label>
@@ -593,6 +660,18 @@
     <label for="adsCommand">Custom command</label>
     <input id="adsCommand" type="text" value="ADS1299 RREG ID">
     <button id="adsSendBtn">Send Command</button>
+    </div>
+
+    <div class="controlGroup">
+      <h2>4. 원신호 품질 확인</h2>
+      <div class="statusGrid">
+        <div class="statusCard"><strong>DC offset</strong><span id="eegDc">-</span></div>
+        <div class="statusCard"><strong>RMS noise</strong><span id="eegRms">-</span></div>
+        <div class="statusCard"><strong>P-P amplitude</strong><span id="eegP2p">-</span></div>
+        <div class="statusCard"><strong>Min / Max</strong><span id="eegRange">-</span></div>
+      </div>
+      <button id="csvDownloadBtn">CSV 저장</button>
+    </div>
 
     <h2>CSV 설정</h2>
     <div class="row">
@@ -650,7 +729,11 @@
       <button id="exportBtn">요약 저장</button>
     </div>
 
-    <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
+    <div class="controlGroup">
+      <h2>5. 로그</h2>
+      <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
+      <div id="eventLog" class="logBox"></div>
+    </div>
   </aside>
 
   <div class="workspace">
@@ -728,7 +811,10 @@ const state = {
   lastStatus: "",
   bleDevice: null,
   bleRxCharacteristic: null,
-  bleTxCharacteristic: null
+  bleTxCharacteristic: null,
+  streamStartedAt: 0,
+  lastPacketAt: 0,
+  eventLog: []
 };
 
 const bands = {
@@ -743,7 +829,56 @@ const $ = id => document.getElementById(id);
 function status(msg) {
   $("status").textContent = msg;
   state.lastStatus = msg;
+  appendLog(msg);
   updateAnalysisLog();
+}
+
+function setText(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
+}
+
+function appendLog(msg) {
+  const line = `[${new Date().toLocaleTimeString()}] ${String(msg).replace(/\n/g, " | ")}`;
+  state.eventLog.push(line);
+  if (state.eventLog.length > 120) state.eventLog.shift();
+  const el = $("eventLog");
+  if (el) {
+    el.textContent = state.eventLog.join("\n");
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function updateConnectionCards() {
+  setText("bleState", state.bleDevice?.gatt?.connected ? "연결됨" : "대기");
+  setText("cmdState", state.bleRxCharacteristic ? "준비됨" : "미연결");
+  setText("sampleCount", String(state.streamRows.length));
+  if (state.streamStartedAt && state.streamRows.length > 1) {
+    const elapsed = Math.max((performance.now() - state.streamStartedAt) / 1000, 0.001);
+    setText("rxHz", (state.streamRows.length / elapsed).toFixed(1));
+  } else {
+    setText("rxHz", "0");
+  }
+}
+
+function updateEegStatus() {
+  const rows = state.streamRows;
+  const channels = state.streamHeaders?.filter(h => /^ch\d+$/i.test(h) || /^eeg/i.test(h)) || [];
+  const ch = channels[0];
+  if (!rows.length || !ch) {
+    ["eegDc", "eegRms", "eegP2p", "eegRange"].forEach(id => setText(id, "-"));
+    return;
+  }
+  const values = rows.slice(-1000).map(r => r[ch]).filter(Number.isFinite);
+  if (!values.length) return;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const rms = Math.sqrt(values.reduce((a, b) => a + b * b, 0) / values.length);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  setText("eegDc", mean.toFixed(1));
+  setText("eegRms", rms.toFixed(1));
+  setText("eegP2p", (max - min).toFixed(1));
+  setText("eegRange", `${min.toFixed(0)} / ${max.toFixed(0)}`);
 }
 
 function shortName(name) {
@@ -1772,6 +1907,7 @@ async function connectSerial() {
   }
   const port = await navigator.serial.requestPort();
   await port.open({ baudRate: Number($("baudRate").value) || 115200 });
+  state.streamStartedAt = performance.now();
   status("USB Serial 연결됨. CSV header와 data line을 기다리는 중...");
   const decoder = new TextDecoderStream();
   port.readable.pipeTo(decoder.writable);
@@ -1795,6 +1931,13 @@ async function connectBle() {
     acceptAllDevices: true,
     optionalServices: [service]
   });
+  device.addEventListener("gattserverdisconnected", () => {
+    state.bleDevice = null;
+    state.bleRxCharacteristic = null;
+    state.bleTxCharacteristic = null;
+    updateConnectionCards();
+    status("BLE 연결이 해제되었습니다.");
+  });
   const server = await device.gatt.connect();
   const svc = await server.getPrimaryService(service);
   const ch = await svc.getCharacteristic(characteristic);
@@ -1806,6 +1949,8 @@ async function connectBle() {
   state.bleDevice = device;
   state.bleTxCharacteristic = ch;
   state.bleRxCharacteristic = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
+  state.streamStartedAt = performance.now();
+  updateConnectionCards();
   status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
 }
 
@@ -1816,7 +1961,9 @@ async function sendAds1299Command(command) {
   }
   const line = command.trim();
   if (!line) return;
+  setText("cmdState", "전송 중");
   await state.bleRxCharacteristic.writeValue(new TextEncoder().encode(`${line}\n`));
+  setText("cmdState", "준비됨");
   status(`명령 전송됨:\n${line}`);
 }
 
@@ -1859,6 +2006,8 @@ function appendStreamText(text, source) {
 
 function appendStreamLine(line, source) {
   if (!line.trim()) return;
+  state.lastPacketAt = performance.now();
+  updateConnectionCards();
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
   if (/^(OK|ERR|REG|RX|PONG)\b/i.test(line.trim())) {
@@ -1879,9 +2028,32 @@ function appendStreamLine(line, source) {
   state.streamHeaders.forEach((h, i) => obj[h] = Number.parseFloat(cells[i]));
   state.streamRows.push(obj);
   if (state.streamRows.length > 30000) state.streamRows.splice(0, state.streamRows.length - 30000);
+  updateConnectionCards();
+  updateEegStatus();
   if (state.streamRows.length % 25 === 0) {
     loadDataset(state.streamHeaders, state.streamRows.slice(), source);
   }
+}
+
+function downloadStreamCsv() {
+  if (!state.streamHeaders || !state.streamRows.length) {
+    status("저장할 stream 데이터가 아직 없습니다.");
+    return;
+  }
+  const headers = state.streamHeaders;
+  const lines = [headers.join(",")];
+  state.streamRows.forEach(row => {
+    lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  link.href = url;
+  link.download = `ads1299_stream_${stamp}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  status(`CSV 저장됨: ${link.download}`);
 }
 
 function exportSummary() {
@@ -1935,6 +2107,7 @@ $("conditionB").addEventListener("change", () => {
 });
 $("serialBtn").addEventListener("click", () => connectSerial().catch(err => status(String(err.stack || err))));
 $("bleBtn").addEventListener("click", () => connectBle().catch(err => status(String(err.stack || err))));
+$("adsPingBtn").addEventListener("click", () => sendAds1299Command("PING").catch(err => status(String(err.stack || err))));
 $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));
@@ -1946,6 +2119,7 @@ $("adsApplyChannelsBtn").addEventListener("click", () => sendAds1299Command(adsC
 $("adsReadRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 RREG ${$("adsRegAddr").value.trim()}`).catch(err => status(String(err.stack || err))));
 $("adsWriteRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 WREG ${$("adsRegAddr").value.trim()} ${$("adsRegValue").value.trim()}`).catch(err => status(String(err.stack || err))));
 $("adsSendBtn").addEventListener("click", () => sendAds1299Command($("adsCommand").value).catch(err => status(String(err.stack || err))));
+$("csvDownloadBtn").addEventListener("click", downloadStreamCsv);
 
 document.querySelectorAll(".tab").forEach(btn => {
   btn.addEventListener("click", () => {
