@@ -2428,20 +2428,45 @@ async function sendAds1299Command(command) {
 async function writeBleCommandLine(line) {
   const payload = new TextEncoder().encode(`${line}\n`);
   const ch = state.bleRxCharacteristic;
+  const chunkSize = 18;
 
-  if (ch.properties.write && ch.writeValueWithResponse) {
-    try {
-      await ch.writeValueWithResponse(payload);
-      return;
-    } catch (err) {
-      if (!/not supported/i.test(String(err && (err.message || err)))) throw err;
+  for (let offset = 0; offset < payload.length; offset += chunkSize) {
+    const chunk = payload.slice(offset, offset + chunkSize);
+    let sent = false;
+    let lastErr = null;
+
+    if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
+      try {
+        await ch.writeValueWithoutResponse(chunk);
+        sent = true;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+
+    if (!sent && ch.properties.write && ch.writeValueWithResponse) {
+      try {
+        await ch.writeValueWithResponse(chunk);
+        sent = true;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (!sent && ch.writeValue) {
+      try {
+        await ch.writeValue(chunk);
+        sent = true;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (!sent) {
+      throw lastErr || new Error("BLE write is not supported by this characteristic.");
+    }
+    await new Promise(resolve => setTimeout(resolve, 15));
   }
-  if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
-    await ch.writeValueWithoutResponse(payload);
-    return;
-  }
-  await ch.writeValue(payload);
 }
 
 async function sendAds1299Commands(commands) {
