@@ -909,10 +909,6 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 		return -EAGAIN;
 	}
 
-	if (gpio_pin_get_dt(&drdy_gpio) > 0) {
-		return -EAGAIN;
-	}
-
 	err = bitbang_gpio_configure(gpio);
 	if (err) {
 		return err;

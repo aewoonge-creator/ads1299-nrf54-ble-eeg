@@ -523,6 +523,8 @@ int main(void)
 		struct ads1299_sample sample;
 		char line[160];
 		static int64_t last_auto_probe_ms;
+		static int64_t last_stream_status_ms;
+		int sample_err;
 
 		poll_rtt_commands();
 
@@ -564,7 +566,8 @@ int main(void)
 			}
 		}
 
-		if (ads1299_read_sample(&sample) == 0) {
+		sample_err = ads1299_read_sample(&sample);
+		if (sample_err == 0) {
 			snprintk(line, sizeof(line),
 				"%u,%d,%d,%d,%d,%d,%d,%d,%d\n",
 				sample.t_ms,
@@ -577,9 +580,14 @@ int main(void)
 				sample.channel[6],
 				sample.channel[7]);
 			ble_send_line(line);
+		} else if (ads1299_is_streaming() &&
+			   k_uptime_get() - last_stream_status_ms > 1000) {
+			last_stream_status_ms = k_uptime_get();
+			snprintk(line, sizeof(line), "STREAM ERR %d\n", sample_err);
+			ble_send_line(line);
 		}
 
-		k_sleep(K_MSEC(4));
+		k_sleep(K_MSEC(20));
 	}
 
 	return 0;
