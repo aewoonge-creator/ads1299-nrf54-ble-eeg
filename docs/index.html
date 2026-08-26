@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-26-ads-stream-channels">
+  <meta name="app-version" content="2026-08-26-centered-channel-lanes">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1979,7 +1979,7 @@ function drawAxes(ctx, x, y, w, h) {
 function drawSignals(ctx, w, h, a, series) {
   $("plotTitle").textContent = state.view === "raw" ? "Raw EEG" : "Filtered EEG";
   $("plotSub").textContent = `${state.sourceName} · ${a.selected.join(", ")}`;
-  const pad = { l: 82, r: 20, t: 22, b: 36 };
+  const pad = { l: 82, r: 20, t: 28, b: 36 };
   const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
   drawAxes(ctx, pad.l, pad.t, pw, ph);
   const lanes = a.selected.length;
@@ -1989,13 +1989,22 @@ function drawSignals(ctx, w, h, a, series) {
     if (xs.length < 2) return;
     const laneH = ph / lanes;
     const base = pad.t + laneH * (idx + 0.5);
-    const maxAbs = Math.max(...xs.map(v => Math.abs(v))) || 1;
+    const finite = xs.filter(Number.isFinite);
+    const mean = finite.reduce((sum, v) => sum + v, 0) / Math.max(1, finite.length);
+    const centered = xs.map(v => Number.isFinite(v) ? v - mean : 0);
+    const maxAbs = Math.max(...centered.map(v => Math.abs(v))) || 1;
+    ctx.strokeStyle = "#eef2f6";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, base);
+    ctx.lineTo(pad.l + pw, base);
+    ctx.stroke();
     ctx.strokeStyle = colors[idx % colors.length];
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    xs.forEach((v, i) => {
-      const x = pad.l + i / (xs.length - 1) * pw;
-      const y = base - (v / maxAbs) * laneH * 0.38;
+    centered.forEach((v, i) => {
+      const x = pad.l + i / Math.max(1, centered.length - 1) * pw;
+      const y = base - (v / maxAbs) * laneH * 0.32;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
@@ -2004,6 +2013,9 @@ function drawSignals(ctx, w, h, a, series) {
     ctx.font = "11px Segoe UI";
     ctx.textAlign = "right";
     ctx.fillText(ch, pad.l - 10, base + 4);
+    ctx.fillStyle = "#667085";
+    ctx.font = "10px Segoe UI";
+    ctx.fillText(`±${maxAbs.toFixed(0)}`, pad.l - 10, base + laneH * 0.28);
   });
   drawBandGuides(ctx, pad.l, pad.t, pw, ph, false);
 }
