@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-26-control-log-inline">
+  <meta name="app-version" content="2026-08-26-ads-stream-channels">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1340,6 +1340,8 @@ function parseCsv(text) {
 function detectChannels(headers) {
   const eeg = headers.filter(h => /^EEG_/i.test(h));
   if (eeg.length) return eeg;
+  const adsStream = headers.filter(h => /^ch\d+$/i.test(h));
+  if (adsStream.length) return adsStream;
   const museRaw = headers.filter(h => /^RAW_/i.test(h));
   if (museRaw.length) return museRaw;
   const muse = headers.filter(h => /^(TP9|AF7|AF8|TP10)$/i.test(h));
@@ -1354,6 +1356,9 @@ function datasetHint(headers) {
   }
   if (headers.includes("TP9") && headers.includes("AF7") && headers.includes("AF8") && headers.includes("TP10")) {
     return "알려진 CLARE/Muse 패턴과 일치: TP9, AF7, AF8, TP10 raw EEG";
+  }
+  if (headers.some(h => /^ch\d+$/i.test(h))) {
+    return "ADS1299 BLE stream 패턴과 일치: ch1-ch8 raw EEG";
   }
   if (headers.some(h => /^RAW_/i.test(h)) && headers.some(h => /^Alpha_/i.test(h))) {
     return "알려진 UNIVERSE/Muse 패턴과 일치: RAW 채널과 Delta/Theta/Alpha/Beta/Gamma 컬럼 포함";
