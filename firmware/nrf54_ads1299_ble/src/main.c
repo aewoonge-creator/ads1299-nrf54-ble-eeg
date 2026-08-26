@@ -175,6 +175,8 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 static void ble_send_line(const char *line)
 {
 	int err;
+	size_t len;
+	size_t offset;
 
 #if defined(CONFIG_USE_SEGGER_RTT)
 	SEGGER_RTT_WriteString(0, line);
@@ -184,9 +186,17 @@ static void ble_send_line(const char *line)
 		return;
 	}
 
-	err = bt_gatt_notify(current_conn, &uart_service.attrs[4], line, strlen(line));
-	if (err) {
-		LOG_WRN("Notify failed: %d", err);
+	len = strlen(line);
+	for (offset = 0; offset < len; offset += 18) {
+		size_t chunk_len = MIN((size_t)18, len - offset);
+
+		err = bt_gatt_notify(current_conn, &uart_service.attrs[4],
+				     line + offset, chunk_len);
+		if (err) {
+			LOG_WRN("Notify failed: %d", err);
+			return;
+		}
+		k_sleep(K_MSEC(2));
 	}
 }
 
