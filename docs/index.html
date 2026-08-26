@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-26-short-test-command">
+  <meta name="app-version" content="2026-08-26-control-log-inline">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -234,6 +234,14 @@
       font-size: 11px;
       line-height: 1.45;
       white-space: pre-wrap;
+    }
+
+    .inlineLog {
+      margin: 8px 0 10px;
+    }
+
+    .inlineLog .status {
+      margin-top: 0;
     }
 
     .adsTableWrap,
@@ -734,6 +742,10 @@
         <button id="adsTestBtn">Test Signal</button>
         <button id="adsRegBtn">Read Regs</button>
       </div>
+      <div class="inlineLog">
+        <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
+        <div id="eventLog" class="logBox"></div>
+      </div>
     <div class="triple">
       <div>
         <label for="adsRate">SPS</label>
@@ -922,11 +934,6 @@
       <button id="exportBtn">요약 저장</button>
     </div>
 
-    <div class="controlGroup">
-      <h2>5. 로그</h2>
-      <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
-      <div id="eventLog" class="logBox"></div>
-    </div>
   </aside>
 
   <div class="workspace">
