@@ -2429,12 +2429,12 @@ async function writeBleCommandLine(line) {
   const payload = new TextEncoder().encode(`${line}\n`);
   const ch = state.bleRxCharacteristic;
 
-  if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
-    await ch.writeValueWithoutResponse(payload);
-    return;
-  }
   if (ch.properties.write && ch.writeValueWithResponse) {
     await ch.writeValueWithResponse(payload);
+    return;
+  }
+  if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
+    await ch.writeValueWithoutResponse(payload);
     return;
   }
   await ch.writeValue(payload);

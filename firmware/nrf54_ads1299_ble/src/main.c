@@ -107,7 +107,11 @@ static ssize_t rx_written(
 		if (c == '\n') {
 			rx_line[rx_len] = '\0';
 			if (rx_len > 0) {
+				char ack[180];
+
 				LOG_INF("RX: %s", rx_line);
+				snprintk(ack, sizeof(ack), "ACK %s\n", rx_line);
+				ble_send_line(ack);
 				k_mutex_lock(&command_lock, K_FOREVER);
 				strncpy(command_line, rx_line, sizeof(command_line) - 1);
 				command_line[sizeof(command_line) - 1] = '\0';
@@ -238,9 +242,10 @@ static void handle_ads1299_command(const char *command)
 		int err = ads1299_probe_id_modes(response, sizeof(response));
 
 		if (err == 0) {
-			ble_send_line("SPI PROBE ");
-			ble_send_line(response);
-			ble_send_line("\n");
+			char line[160];
+
+			snprintk(line, sizeof(line), "SPI PROBE %s\n", response);
+			ble_send_line(line);
 		} else {
 			snprintk(response, sizeof(response), "ERR SPI PROBE %d\n", err);
 			ble_send_line(response);
