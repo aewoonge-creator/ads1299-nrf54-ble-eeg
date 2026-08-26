@@ -269,6 +269,81 @@ static void handle_ads1299_command(const char *command)
 		}
 		return;
 	}
+	if (strcmp(command, "ADS1299 RESET PROBE") == 0) {
+		char response[128];
+		int err = ads1299_probe_after_reset(response, sizeof(response));
+
+		if (err == 0) {
+			char line[160];
+
+			snprintk(line, sizeof(line), "%s\n", response);
+			ble_send_line(line);
+		} else {
+			snprintk(response, sizeof(response), "ERR RESET PROBE %d\n", err);
+			ble_send_line(response);
+		}
+		return;
+	}
+	if (strcmp(command, "ADS1299 GPIO") == 0) {
+		char response[128];
+		int err = ads1299_gpio_status(response, sizeof(response));
+
+		if (err == 0) {
+			char line[160];
+
+			snprintk(line, sizeof(line), "%s\n", response);
+			ble_send_line(line);
+		} else {
+			snprintk(response, sizeof(response), "ERR GPIO %d\n", err);
+			ble_send_line(response);
+		}
+		return;
+	}
+	if (strcmp(command, "ADS1299 MISO GPIO") == 0) {
+		char response[128];
+		int err = ads1299_miso_gpio_probe(response, sizeof(response));
+
+		if (err == 0) {
+			char line[160];
+
+			snprintk(line, sizeof(line), "%s\n", response);
+			ble_send_line(line);
+		} else {
+			snprintk(response, sizeof(response), "ERR MISO GPIO %d\n", err);
+			ble_send_line(response);
+		}
+		return;
+	}
+	if (strcmp(command, "ADS1299 MISO CS LOW") == 0) {
+		char response[128];
+		int err = ads1299_miso_cs_low_probe(response, sizeof(response));
+
+		if (err == 0) {
+			char line[160];
+
+			snprintk(line, sizeof(line), "%s\n", response);
+			ble_send_line(line);
+		} else {
+			snprintk(response, sizeof(response), "ERR MISO CS LOW %d\n", err);
+			ble_send_line(response);
+		}
+		return;
+	}
+	if (strcmp(command, "ADS1299 BITBANG PROBE") == 0) {
+		char response[128];
+		int err = ads1299_bitbang_probe_id_modes(response, sizeof(response));
+
+		if (err == 0) {
+			char line[160];
+
+			snprintk(line, sizeof(line), "BITBANG PROBE %s\n", response);
+			ble_send_line(line);
+		} else {
+			snprintk(response, sizeof(response), "ERR BITBANG PROBE %d\n", err);
+			ble_send_line(response);
+		}
+		return;
+	}
 	if (strncmp(command, "ADS1299 SPI MODE ", 17) == 0) {
 		uint8_t mode = (uint8_t)strtoul(command + 17, NULL, 0);
 		int err = ads1299_set_spi_mode(mode);
@@ -432,8 +507,46 @@ int main(void)
 	while (1) {
 		struct ads1299_sample sample;
 		char line[160];
+		static int64_t last_auto_probe_ms;
 
 		poll_rtt_commands();
+
+		if (k_uptime_get() - last_auto_probe_ms > 3000) {
+			char probe[128];
+			char gpio[128];
+			char miso[128];
+			char miso_cs_low[128];
+			char bitbang[128];
+			char reset_probe[128];
+
+			last_auto_probe_ms = k_uptime_get();
+			if (ads1299_gpio_status(gpio, sizeof(gpio)) == 0) {
+				snprintk(line, sizeof(line), "AUTO %s\n", gpio);
+				ble_send_line(line);
+			}
+			if (ads1299_miso_gpio_probe(miso, sizeof(miso)) == 0) {
+				snprintk(line, sizeof(line), "AUTO %s\n", miso);
+				ble_send_line(line);
+			}
+			if (ads1299_miso_cs_low_probe(miso_cs_low, sizeof(miso_cs_low)) == 0) {
+				snprintk(line, sizeof(line), "AUTO %s\n", miso_cs_low);
+				ble_send_line(line);
+			}
+			if (ads1299_probe_id_modes(probe, sizeof(probe)) == 0) {
+				snprintk(line, sizeof(line), "AUTO SPI PROBE %s\n", probe);
+				ble_send_line(line);
+			} else {
+				ble_send_line("AUTO SPI PROBE ERR\n");
+			}
+			if (ads1299_bitbang_probe_id_modes(bitbang, sizeof(bitbang)) == 0) {
+				snprintk(line, sizeof(line), "AUTO BITBANG PROBE %s\n", bitbang);
+				ble_send_line(line);
+			}
+			if (ads1299_probe_after_reset(reset_probe, sizeof(reset_probe)) == 0) {
+				snprintk(line, sizeof(line), "AUTO %s\n", reset_probe);
+				ble_send_line(line);
+			}
+		}
 
 		if (ads1299_read_sample(&sample) == 0) {
 			snprintk(line, sizeof(line),

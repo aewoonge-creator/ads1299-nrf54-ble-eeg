@@ -14,6 +14,12 @@ LOG_MODULE_REGISTER(ads1299, LOG_LEVEL_INF);
 
 #define ADS1299_NODE DT_NODELABEL(ads1299)
 #define ADS1299_CONTROL_NODE DT_NODELABEL(ads1299_control)
+#define ADS1299_MISO_PROBE_NODE DT_NODELABEL(gpio0)
+#define ADS1299_BB_SCK_PIN 0
+#define ADS1299_BB_MOSI_PIN 1
+#define ADS1299_MISO_PROBE_PIN 2
+#define ADS1299_BB_CS_PIN 3
+#define ADS1299_BB_RESET_PIN 4
 
 #define ADS1299_CMD_WAKEUP  0x02
 #define ADS1299_CMD_STANDBY 0x04
@@ -36,6 +42,8 @@ LOG_MODULE_REGISTER(ads1299, LOG_LEVEL_INF);
 #define ADS1299_REG_BIAS_SENSN 0x0E
 
 #define ADS1299_FRAME_BYTES (3 + ADS1299_CHANNEL_COUNT * 3)
+#define ADS1299_SPI_FREQUENCY_HZ 1000000U
+#define ADS1299_BITBANG_MODE 1
 #define ADS1299_SPI_BASE_OPERATION \
 	(SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB)
 
@@ -60,6 +68,10 @@ static spi_operation_t current_spi_operation = ADS1299_SPI_BASE_OPERATION | SPI_
 static K_MUTEX_DEFINE(spi_lock);
 static uint8_t spi_tx_buf[ADS1299_FRAME_BYTES + 1];
 static uint8_t spi_rx_buf[ADS1299_FRAME_BYTES + 1];
+
+static int bitbang_cmd(uint8_t command);
+static int bitbang_read_reg(uint8_t reg, uint8_t *value);
+static int bitbang_write_reg(uint8_t reg, uint8_t value);
 
 static int ads1299_spi_ready(void)
 {
@@ -166,6 +178,7 @@ static int ads1299_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 	memset(spi_rx_buf, 0, len);
 
 	config.operation = current_spi_operation;
+	config.frequency = ADS1299_SPI_FREQUENCY_HZ;
 	err = spi_transceive(ads1299_spi.bus, &config, &tx_set, rx ? &rx_set : NULL);
 
 	if (err == 0 && rx) {
@@ -176,33 +189,59 @@ static int ads1299_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 	return err;
 }
 
+static int ads1299_transfer_no_cs(const uint8_t *tx, uint8_t *rx, size_t len)
+{
+	struct spi_config config = ads1299_spi.config;
+	struct spi_buf tx_buf = {
+		.buf = spi_tx_buf,
+		.len = len,
+	};
+	struct spi_buf rx_buf = {
+		.buf = spi_rx_buf,
+		.len = len,
+	};
+	const struct spi_buf_set tx_set = {
+		.buffers = &tx_buf,
+		.count = 1,
+	};
+	const struct spi_buf_set rx_set = {
+		.buffers = &rx_buf,
+		.count = 1,
+	};
+	int err;
+
+	if (!tx || len > sizeof(spi_tx_buf)) {
+		return -EINVAL;
+	}
+
+	memset(&config.cs, 0, sizeof(config.cs));
+	config.operation = current_spi_operation;
+	config.frequency = ADS1299_SPI_FREQUENCY_HZ;
+
+	memcpy(spi_tx_buf, tx, len);
+	memset(spi_rx_buf, 0, len);
+
+	err = spi_transceive(ads1299_spi.bus, &config, &tx_set, rx ? &rx_set : NULL);
+	if (err == 0 && rx) {
+		memcpy(rx, spi_rx_buf, len);
+	}
+
+	return err;
+}
+
 static int ads1299_cmd(uint8_t command)
 {
-	uint8_t tx = command;
-
-	return ads1299_transfer(&tx, NULL, sizeof(tx));
+	return bitbang_cmd(command);
 }
 
 static int ads1299_read_reg(uint8_t reg, uint8_t *value)
 {
-	uint8_t tx[3] = { ADS1299_CMD_RREG | reg, 0x00, 0x00 };
-	uint8_t rx[3] = { 0 };
-	int err;
-
-	err = ads1299_transfer(tx, rx, sizeof(tx));
-	if (err) {
-		return err;
-	}
-
-	*value = rx[2];
-	return 0;
+	return bitbang_read_reg(reg, value);
 }
 
 static int ads1299_write_reg(uint8_t reg, uint8_t value)
 {
-	uint8_t tx[3] = { ADS1299_CMD_WREG | reg, 0x00, value };
-
-	return ads1299_transfer(tx, NULL, sizeof(tx));
+	return bitbang_write_reg(reg, value);
 }
 
 static uint8_t data_rate_bits(uint16_t sps)
@@ -398,6 +437,371 @@ int ads1299_probe_id_modes(char *response, size_t response_len)
 	}
 
 	ads1299_set_spi_mode(saved_mode);
+	return 0;
+}
+
+int ads1299_probe_after_reset(char *response, size_t response_len)
+{
+	uint8_t id = 0;
+	int err;
+
+	if (!response || response_len == 0) {
+		return -EINVAL;
+	}
+
+	err = ads1299_configure_spi_pins();
+	if (err) {
+		snprintk(response, response_len, "RESET_PROBE CFG_ERR%d", err);
+		return 0;
+	}
+
+	gpio_pin_set_dt(&reset_gpio, 1);
+	k_sleep(K_MSEC(5));
+	gpio_pin_set_dt(&reset_gpio, 0);
+	k_sleep(K_MSEC(50));
+
+	err = ads1299_cmd(ADS1299_CMD_SDATAC);
+	if (err) {
+		snprintk(response, response_len, "RESET_PROBE SDATAC_ERR%d", err);
+		return 0;
+	}
+	k_sleep(K_MSEC(2));
+
+	err = ads1299_read_id(&id);
+	if (err) {
+		snprintk(response, response_len, "RESET_PROBE RREG_ERR%d", err);
+		return 0;
+	}
+
+	snprintk(response, response_len, "RESET_PROBE ID=0x%02X", id);
+	return 0;
+}
+
+int ads1299_gpio_status(char *response, size_t response_len)
+{
+	int err;
+	int cs;
+	int reset;
+	int drdy = -1;
+
+	if (!response || response_len == 0) {
+		return -EINVAL;
+	}
+
+	err = ads1299_configure_spi_pins();
+	if (err) {
+		snprintk(response, response_len, "GPIO CFG_ERR%d", err);
+		return 0;
+	}
+
+	cs = gpio_pin_get_dt(&cs_gpio);
+	reset = gpio_pin_get_dt(&reset_gpio);
+	if (gpio_is_ready_dt(&drdy_gpio)) {
+		gpio_pin_configure_dt(&drdy_gpio, GPIO_INPUT);
+		drdy = gpio_pin_get_dt(&drdy_gpio);
+	}
+
+	snprintk(response, response_len, "GPIO CS=%d RESET=%d DRDY=%d",
+		 cs, reset, drdy);
+	return 0;
+}
+
+int ads1299_miso_gpio_probe(char *response, size_t response_len)
+{
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	int err;
+	int pull_down;
+	int pull_up;
+
+	if (!response || response_len == 0) {
+		return -EINVAL;
+	}
+	if (!device_is_ready(gpio)) {
+		snprintk(response, response_len, "MISO_GPIO GPIO_NOT_READY");
+		return 0;
+	}
+
+	err = gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT | GPIO_PULL_DOWN);
+	if (err) {
+		snprintk(response, response_len, "MISO_GPIO PD_CFG_ERR%d", err);
+		return 0;
+	}
+	k_sleep(K_MSEC(2));
+	pull_down = gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN);
+
+	err = gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT | GPIO_PULL_UP);
+	if (err) {
+		snprintk(response, response_len, "MISO_GPIO PU_CFG_ERR%d", err);
+		return 0;
+	}
+	k_sleep(K_MSEC(2));
+	pull_up = gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN);
+
+	spi_pins_configured = false;
+	ads1299_configure_spi_pins();
+
+	snprintk(response, response_len, "MISO_GPIO PD=%d PU=%d", pull_down, pull_up);
+	return 0;
+}
+
+int ads1299_miso_cs_low_probe(char *response, size_t response_len)
+{
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	int err;
+	int pull_down;
+	int pull_up;
+
+	if (!response || response_len == 0) {
+		return -EINVAL;
+	}
+
+	err = ads1299_configure_spi_pins();
+	if (err) {
+		snprintk(response, response_len, "MISO_CS_LOW CFG_ERR%d", err);
+		return 0;
+	}
+	if (!device_is_ready(gpio)) {
+		snprintk(response, response_len, "MISO_CS_LOW GPIO_NOT_READY");
+		return 0;
+	}
+
+	gpio_pin_set_dt(&cs_gpio, 1);
+	k_busy_wait(10);
+
+	err = gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT | GPIO_PULL_DOWN);
+	if (err) {
+		gpio_pin_set_dt(&cs_gpio, 0);
+		snprintk(response, response_len, "MISO_CS_LOW PD_CFG_ERR%d", err);
+		return 0;
+	}
+	k_sleep(K_MSEC(2));
+	pull_down = gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN);
+
+	err = gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT | GPIO_PULL_UP);
+	if (err) {
+		gpio_pin_set_dt(&cs_gpio, 0);
+		snprintk(response, response_len, "MISO_CS_LOW PU_CFG_ERR%d", err);
+		return 0;
+	}
+	k_sleep(K_MSEC(2));
+	pull_up = gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN);
+
+	gpio_pin_set_dt(&cs_gpio, 0);
+	spi_pins_configured = false;
+	ads1299_configure_spi_pins();
+
+	snprintk(response, response_len, "MISO_CS_LOW PD=%d PU=%d", pull_down, pull_up);
+	return 0;
+}
+
+static void bitbang_delay(void)
+{
+	k_busy_wait(10);
+}
+
+static int bitbang_gpio_configure(const struct device *gpio)
+{
+	int err;
+
+	if (!device_is_ready(gpio)) {
+		return -ENODEV;
+	}
+
+	err = gpio_pin_configure(gpio, ADS1299_BB_SCK_PIN, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+	err = gpio_pin_configure(gpio, ADS1299_BB_MOSI_PIN, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+	err = gpio_pin_configure(gpio, ADS1299_BB_CS_PIN, GPIO_OUTPUT_ACTIVE);
+	if (err) {
+		return err;
+	}
+	err = gpio_pin_configure(gpio, ADS1299_BB_RESET_PIN, GPIO_OUTPUT_ACTIVE);
+	if (err) {
+		return err;
+	}
+	return gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT);
+}
+
+static uint8_t bitbang_transfer_byte(const struct device *gpio, uint8_t tx, uint8_t mode)
+{
+	bool cpol = (mode & 0x02) != 0;
+	bool cpha = (mode & 0x01) != 0;
+	uint8_t rx = 0;
+
+	gpio_pin_set(gpio, ADS1299_BB_SCK_PIN, cpol ? 1 : 0);
+	bitbang_delay();
+
+	for (int bit = 7; bit >= 0; bit--) {
+		gpio_pin_set(gpio, ADS1299_BB_MOSI_PIN, (tx >> bit) & 0x01);
+		bitbang_delay();
+
+		if (!cpha) {
+			gpio_pin_set(gpio, ADS1299_BB_SCK_PIN, cpol ? 0 : 1);
+			bitbang_delay();
+			rx = (rx << 1) | (gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN) ? 1 : 0);
+			gpio_pin_set(gpio, ADS1299_BB_SCK_PIN, cpol ? 1 : 0);
+		} else {
+			gpio_pin_set(gpio, ADS1299_BB_SCK_PIN, cpol ? 0 : 1);
+			bitbang_delay();
+			gpio_pin_set(gpio, ADS1299_BB_SCK_PIN, cpol ? 1 : 0);
+			bitbang_delay();
+			rx = (rx << 1) | (gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN) ? 1 : 0);
+		}
+		bitbang_delay();
+	}
+
+	return rx;
+}
+
+static int bitbang_cmd(uint8_t command)
+{
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	int err;
+
+	err = bitbang_gpio_configure(gpio);
+	if (err) {
+		return err;
+	}
+
+	k_mutex_lock(&spi_lock, K_FOREVER);
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, command, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
+	k_mutex_unlock(&spi_lock);
+
+	spi_pins_configured = false;
+	ads1299_configure_spi_pins();
+	return 0;
+}
+
+static int bitbang_read_reg(uint8_t reg, uint8_t *value)
+{
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	int err;
+
+	if (!value) {
+		return -EINVAL;
+	}
+
+	err = bitbang_gpio_configure(gpio);
+	if (err) {
+		return err;
+	}
+
+	k_mutex_lock(&spi_lock, K_FOREVER);
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, ADS1299_CMD_RREG | reg, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, 0x00, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	*value = bitbang_transfer_byte(gpio, 0x00, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
+	k_mutex_unlock(&spi_lock);
+
+	spi_pins_configured = false;
+	ads1299_configure_spi_pins();
+	return 0;
+}
+
+static int bitbang_write_reg(uint8_t reg, uint8_t value)
+{
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	int err;
+
+	err = bitbang_gpio_configure(gpio);
+	if (err) {
+		return err;
+	}
+
+	k_mutex_lock(&spi_lock, K_FOREVER);
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, ADS1299_CMD_WREG | reg, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, 0x00, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, value, ADS1299_BITBANG_MODE);
+	bitbang_delay();
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
+	k_mutex_unlock(&spi_lock);
+
+	spi_pins_configured = false;
+	ads1299_configure_spi_pins();
+	return 0;
+}
+
+static int bitbang_read_id_mode(uint8_t mode, uint8_t *id)
+{
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	int err;
+
+	err = bitbang_gpio_configure(gpio);
+	if (err) {
+		return err;
+	}
+
+	gpio_pin_set(gpio, ADS1299_BB_RESET_PIN, 0);
+	k_sleep(K_MSEC(5));
+	gpio_pin_set(gpio, ADS1299_BB_RESET_PIN, 1);
+	k_sleep(K_MSEC(50));
+
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, ADS1299_CMD_SDATAC, mode);
+	bitbang_delay();
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
+	k_sleep(K_MSEC(2));
+
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, ADS1299_CMD_RREG | ADS1299_REG_ID, mode);
+	bitbang_delay();
+	bitbang_transfer_byte(gpio, 0x00, mode);
+	bitbang_delay();
+	*id = bitbang_transfer_byte(gpio, 0x00, mode);
+	bitbang_delay();
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
+
+	spi_pins_configured = false;
+	ads1299_configure_spi_pins();
+	return 0;
+}
+
+int ads1299_bitbang_probe_id_modes(char *response, size_t response_len)
+{
+	size_t used = 0;
+
+	if (!response || response_len == 0) {
+		return -EINVAL;
+	}
+
+	response[0] = '\0';
+	for (uint8_t mode = 0; mode < 4; mode++) {
+		uint8_t id = 0;
+		int err = bitbang_read_id_mode(mode, &id);
+		int written;
+
+		if (err == 0) {
+			written = snprintk(response + used, response_len - used,
+					   "BBM%u=0x%02X ", mode, id);
+		} else {
+			written = snprintk(response + used, response_len - used,
+					   "BBM%u=ERR%d ", mode, err);
+		}
+		if (written < 0 || (size_t)written >= response_len - used) {
+			break;
+		}
+		used += (size_t)written;
+	}
+
 	return 0;
 }
 

@@ -2430,8 +2430,12 @@ async function writeBleCommandLine(line) {
   const ch = state.bleRxCharacteristic;
 
   if (ch.properties.write && ch.writeValueWithResponse) {
-    await ch.writeValueWithResponse(payload);
-    return;
+    try {
+      await ch.writeValueWithResponse(payload);
+      return;
+    } catch (err) {
+      if (!/not supported/i.test(String(err && (err.message || err)))) throw err;
+    }
   }
   if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
     await ch.writeValueWithoutResponse(payload);
@@ -2604,7 +2608,7 @@ $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
-$("adsTestBtn").addEventListener("click", () => sendAds1299Command("ADS1299 CONFIG RATE=250 GAIN=24 MUX=TEST REF=SRB1 BIAS=ON LOFF=OFF TEST=ON").catch(err => status(String(err.stack || err))));
+$("adsTestBtn").addEventListener("click", () => sendAds1299Command("ADS1299 CONFIG TEST=ON MUX=TEST").catch(err => status(String(err.stack || err))));
 $("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => sendAds1299Command(adsConfigCommand()).catch(err => status(String(err.stack || err))));
 $("adsApplyChannelsBtn").addEventListener("click", () => sendAds1299Command(adsChannelsCommand()).catch(err => status(String(err.stack || err))));
