@@ -36,10 +36,12 @@ LOG_MODULE_REGISTER(ads1299, LOG_LEVEL_INF);
 #define ADS1299_REG_BIAS_SENSN 0x0E
 
 #define ADS1299_FRAME_BYTES (3 + ADS1299_CHANNEL_COUNT * 3)
+#define ADS1299_SPI_BASE_OPERATION \
+	(SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB)
 
 static const struct spi_dt_spec ads1299_spi = SPI_DT_SPEC_GET(
 	ADS1299_NODE,
-	SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB | SPI_MODE_CPHA,
+	ADS1299_SPI_BASE_OPERATION | SPI_MODE_CPHA,
 	0);
 
 static const struct gpio_dt_spec drdy_gpio =
@@ -54,21 +56,14 @@ static const struct gpio_dt_spec start_gpio =
 static bool streaming;
 static bool spi_pins_configured;
 static bool data_pins_configured;
+static spi_operation_t current_spi_operation = ADS1299_SPI_BASE_OPERATION | SPI_MODE_CPHA;
 static K_MUTEX_DEFINE(spi_lock);
 static uint8_t spi_tx_buf[ADS1299_FRAME_BYTES + 1];
 static uint8_t spi_rx_buf[ADS1299_FRAME_BYTES + 1];
 
-static struct spi_config ads1299_manual_cs_config(void)
-{
-	struct spi_config config = ads1299_spi.config;
-
-	memset(&config.cs, 0, sizeof(config.cs));
-	return config;
-}
-
 static int ads1299_spi_ready(void)
 {
-	if (!device_is_ready(ads1299_spi.bus)) {
+	if (!spi_is_ready_dt(&ads1299_spi)) {
 		return -ENODEV;
 	}
 	if (!gpio_is_ready_dt(&cs_gpio)) {
@@ -137,7 +132,7 @@ static int ads1299_configure_data_pins(void)
 
 static int ads1299_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 {
-	struct spi_config config = ads1299_manual_cs_config();
+	struct spi_config config = ads1299_spi.config;
 	struct spi_buf tx_buf = {
 		.buf = spi_tx_buf,
 		.len = len,
@@ -170,11 +165,8 @@ static int ads1299_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 	memcpy(spi_tx_buf, tx, len);
 	memset(spi_rx_buf, 0, len);
 
-	gpio_pin_set_dt(&cs_gpio, 1);
-	k_busy_wait(2);
+	config.operation = current_spi_operation;
 	err = spi_transceive(ads1299_spi.bus, &config, &tx_set, rx ? &rx_set : NULL);
-	k_busy_wait(2);
-	gpio_pin_set_dt(&cs_gpio, 0);
 
 	if (err == 0 && rx) {
 		memcpy(rx, spi_rx_buf, len);
@@ -353,6 +345,60 @@ int ads1299_spi_loopback(uint8_t rx[3])
 
 	memset(rx, 0, 3);
 	return ads1299_transfer(tx, rx, sizeof(tx));
+}
+
+int ads1299_set_spi_mode(uint8_t mode)
+{
+	switch (mode) {
+	case 0:
+		current_spi_operation = ADS1299_SPI_BASE_OPERATION;
+		return 0;
+	case 1:
+		current_spi_operation = ADS1299_SPI_BASE_OPERATION | SPI_MODE_CPHA;
+		return 0;
+	case 2:
+		current_spi_operation = ADS1299_SPI_BASE_OPERATION | SPI_MODE_CPOL;
+		return 0;
+	case 3:
+		current_spi_operation = ADS1299_SPI_BASE_OPERATION | SPI_MODE_CPOL | SPI_MODE_CPHA;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+int ads1299_probe_id_modes(char *response, size_t response_len)
+{
+	size_t used = 0;
+	uint8_t saved_mode = 1;
+
+	if (!response || response_len == 0) {
+		return -EINVAL;
+	}
+
+	response[0] = '\0';
+	for (uint8_t mode = 0; mode < 4; mode++) {
+		uint8_t id = 0;
+		int err;
+		int written;
+
+		ads1299_set_spi_mode(mode);
+		err = ads1299_read_id(&id);
+		if (err == 0) {
+			written = snprintk(response + used, response_len - used,
+					   "M%u=0x%02X ", mode, id);
+		} else {
+			written = snprintk(response + used, response_len - used,
+					   "M%u=ERR%d ", mode, err);
+		}
+		if (written < 0 || (size_t)written >= response_len - used) {
+			break;
+		}
+		used += (size_t)written;
+	}
+
+	ads1299_set_spi_mode(saved_mode);
+	return 0;
 }
 
 int ads1299_read_register(uint8_t reg, uint8_t *value)

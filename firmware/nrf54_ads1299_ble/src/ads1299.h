@@ -2,6 +2,7 @@
 #define ADS1299_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define ADS1299_CHANNEL_COUNT 8
@@ -25,6 +26,8 @@ int ads1299_start_stream(void);
 int ads1299_stop_stream(void);
 int ads1299_read_id(uint8_t *id);
 int ads1299_spi_loopback(uint8_t rx[3]);
+int ads1299_set_spi_mode(uint8_t mode);
+int ads1299_probe_id_modes(char *response, size_t response_len);
 int ads1299_read_register(uint8_t reg, uint8_t *value);
 int ads1299_write_register(uint8_t reg, uint8_t value);
 int ads1299_apply_config(const struct ads1299_config *config);

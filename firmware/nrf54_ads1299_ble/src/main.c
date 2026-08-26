@@ -233,6 +233,27 @@ static void handle_ads1299_command(const char *command)
 		}
 		return;
 	}
+	if (strcmp(command, "ADS1299 SPI PROBE") == 0) {
+		char response[128];
+		int err = ads1299_probe_id_modes(response, sizeof(response));
+
+		if (err == 0) {
+			ble_send_line("SPI PROBE ");
+			ble_send_line(response);
+			ble_send_line("\n");
+		} else {
+			snprintk(response, sizeof(response), "ERR SPI PROBE %d\n", err);
+			ble_send_line(response);
+		}
+		return;
+	}
+	if (strncmp(command, "ADS1299 SPI MODE ", 17) == 0) {
+		uint8_t mode = (uint8_t)strtoul(command + 17, NULL, 0);
+		int err = ads1299_set_spi_mode(mode);
+
+		ble_send_line(err == 0 ? "OK SPI MODE\n" : "ERR SPI MODE\n");
+		return;
+	}
 	if (strcmp(command, "ADS1299 RREG ALL") == 0) {
 		char response[128];
 		uint8_t id = 0;

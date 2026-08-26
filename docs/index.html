@@ -710,6 +710,7 @@
         <summary>고급 진단</summary>
         <button id="adsPingBtn">PING 테스트</button>
         <button id="adsSpiLoopbackBtn">SPI Loopback</button>
+        <button id="adsSpiProbeBtn">SPI Probe</button>
         <label for="bleService">BLE service UUID</label>
         <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
         <label for="bleChar">BLE notify characteristic UUID</label>
@@ -2598,6 +2599,7 @@ $("serialBtn").addEventListener("click", () => connectSerial().catch(err => stat
 $("bleBtn").addEventListener("click", () => connectBle().catch(err => status(String(err.stack || err))));
 $("adsPingBtn").addEventListener("click", () => sendAds1299Command("PING").catch(err => status(String(err.stack || err))));
 $("adsSpiLoopbackBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI LOOPBACK").catch(err => status(String(err.stack || err))));
+$("adsSpiProbeBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI PROBE").catch(err => status(String(err.stack || err))));
 $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));
