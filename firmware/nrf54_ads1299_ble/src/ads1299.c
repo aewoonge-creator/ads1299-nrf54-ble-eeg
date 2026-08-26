@@ -44,39 +44,107 @@ static const struct spi_dt_spec ads1299_spi = SPI_DT_SPEC_GET(
 
 static const struct gpio_dt_spec drdy_gpio =
 	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, drdy_gpios);
+static const struct gpio_dt_spec cs_gpio =
+	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, cs_gpios);
 static const struct gpio_dt_spec reset_gpio =
 	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, reset_gpios);
 static const struct gpio_dt_spec start_gpio =
 	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, start_gpios);
 
 static bool streaming;
+static bool spi_pins_configured;
+static bool data_pins_configured;
+static K_MUTEX_DEFINE(spi_lock);
+static uint8_t spi_tx_buf[ADS1299_FRAME_BYTES + 1];
+static uint8_t spi_rx_buf[ADS1299_FRAME_BYTES + 1];
 
-static int ads1299_cmd(uint8_t command)
+static struct spi_config ads1299_manual_cs_config(void)
 {
-	uint8_t tx = command;
-	const struct spi_buf tx_buf = {
-		.buf = &tx,
-		.len = sizeof(tx),
-	};
-	const struct spi_buf_set tx_set = {
-		.buffers = &tx_buf,
-		.count = 1,
-	};
+	struct spi_config config = ads1299_spi.config;
 
-	return spi_write_dt(&ads1299_spi, &tx_set);
+	memset(&config.cs, 0, sizeof(config.cs));
+	return config;
 }
 
-static int ads1299_read_reg(uint8_t reg, uint8_t *value)
+static int ads1299_spi_ready(void)
 {
-	uint8_t tx[3] = { ADS1299_CMD_RREG | reg, 0x00, 0x00 };
-	uint8_t rx[3] = { 0 };
-	const struct spi_buf tx_buf = {
-		.buf = tx,
-		.len = sizeof(tx),
+	if (!device_is_ready(ads1299_spi.bus)) {
+		return -ENODEV;
+	}
+	if (!gpio_is_ready_dt(&cs_gpio)) {
+		return -ENODEV;
+	}
+	return 0;
+}
+
+static int ads1299_configure_spi_pins(void)
+{
+	int err;
+
+	if (spi_pins_configured) {
+		return 0;
+	}
+
+	err = ads1299_spi_ready();
+	if (err) {
+		return err;
+	}
+	if (!gpio_is_ready_dt(&reset_gpio)) {
+		return -ENODEV;
+	}
+
+	err = gpio_pin_configure_dt(&cs_gpio, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+	err = gpio_pin_configure_dt(&reset_gpio, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+	spi_pins_configured = true;
+	return 0;
+}
+
+static int ads1299_configure_data_pins(void)
+{
+	int err;
+
+	if (data_pins_configured) {
+		return 0;
+	}
+
+	err = ads1299_configure_spi_pins();
+	if (err) {
+		return err;
+	}
+	if (!gpio_is_ready_dt(&drdy_gpio) ||
+	    !gpio_is_ready_dt(&start_gpio)) {
+		return -ENODEV;
+	}
+
+	err = gpio_pin_configure_dt(&drdy_gpio, GPIO_INPUT);
+	if (err) {
+		return err;
+	}
+	err = gpio_pin_configure_dt(&start_gpio, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+
+	data_pins_configured = true;
+	return 0;
+}
+
+static int ads1299_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
+{
+	struct spi_config config = ads1299_manual_cs_config();
+	struct spi_buf tx_buf = {
+		.buf = spi_tx_buf,
+		.len = len,
 	};
-	const struct spi_buf rx_buf = {
-		.buf = rx,
-		.len = sizeof(rx),
+	struct spi_buf rx_buf = {
+		.buf = spi_rx_buf,
+		.len = len,
 	};
 	const struct spi_buf_set tx_set = {
 		.buffers = &tx_buf,
@@ -88,7 +156,48 @@ static int ads1299_read_reg(uint8_t reg, uint8_t *value)
 	};
 	int err;
 
-	err = spi_transceive_dt(&ads1299_spi, &tx_set, &rx_set);
+	if (!tx || len > sizeof(spi_tx_buf)) {
+		return -EINVAL;
+	}
+
+	err = ads1299_configure_spi_pins();
+	if (err) {
+		return err;
+	}
+
+	k_mutex_lock(&spi_lock, K_FOREVER);
+
+	memcpy(spi_tx_buf, tx, len);
+	memset(spi_rx_buf, 0, len);
+
+	gpio_pin_set_dt(&cs_gpio, 1);
+	k_busy_wait(2);
+	err = spi_transceive(ads1299_spi.bus, &config, &tx_set, rx ? &rx_set : NULL);
+	k_busy_wait(2);
+	gpio_pin_set_dt(&cs_gpio, 0);
+
+	if (err == 0 && rx) {
+		memcpy(rx, spi_rx_buf, len);
+	}
+
+	k_mutex_unlock(&spi_lock);
+	return err;
+}
+
+static int ads1299_cmd(uint8_t command)
+{
+	uint8_t tx = command;
+
+	return ads1299_transfer(&tx, NULL, sizeof(tx));
+}
+
+static int ads1299_read_reg(uint8_t reg, uint8_t *value)
+{
+	uint8_t tx[3] = { ADS1299_CMD_RREG | reg, 0x00, 0x00 };
+	uint8_t rx[3] = { 0 };
+	int err;
+
+	err = ads1299_transfer(tx, rx, sizeof(tx));
 	if (err) {
 		return err;
 	}
@@ -100,16 +209,8 @@ static int ads1299_read_reg(uint8_t reg, uint8_t *value)
 static int ads1299_write_reg(uint8_t reg, uint8_t value)
 {
 	uint8_t tx[3] = { ADS1299_CMD_WREG | reg, 0x00, value };
-	const struct spi_buf tx_buf = {
-		.buf = tx,
-		.len = sizeof(tx),
-	};
-	const struct spi_buf_set tx_set = {
-		.buffers = &tx_buf,
-		.count = 1,
-	};
 
-	return spi_write_dt(&ads1299_spi, &tx_set);
+	return ads1299_transfer(tx, NULL, sizeof(tx));
 }
 
 static uint8_t data_rate_bits(uint16_t sps)
@@ -161,28 +262,12 @@ int ads1299_init_device(void)
 		.enabled_channel_mask = 0xFF,
 	};
 
-	if (!spi_is_ready_dt(&ads1299_spi) ||
-	    !gpio_is_ready_dt(&drdy_gpio) ||
-	    !gpio_is_ready_dt(&reset_gpio) ||
-	    !gpio_is_ready_dt(&start_gpio)) {
-		return -ENODEV;
-	}
-
-	err = gpio_pin_configure_dt(&drdy_gpio, GPIO_INPUT);
-	if (err) {
-		return err;
-	}
-	err = gpio_pin_configure_dt(&reset_gpio, GPIO_OUTPUT_INACTIVE);
-	if (err) {
-		return err;
-	}
-	err = gpio_pin_configure_dt(&start_gpio, GPIO_OUTPUT_INACTIVE);
+	err = ads1299_configure_spi_pins();
 	if (err) {
 		return err;
 	}
 
 	streaming = false;
-	gpio_pin_set_dt(&start_gpio, 0);
 
 	gpio_pin_set_dt(&reset_gpio, 1);
 	k_sleep(K_MSEC(5));
@@ -191,19 +276,19 @@ int ads1299_init_device(void)
 
 	err = ads1299_cmd(ADS1299_CMD_SDATAC);
 	if (err) {
-		return err;
+		return -1000 + err;
 	}
 	k_sleep(K_MSEC(2));
 
 	err = ads1299_read_id(&id);
 	if (err) {
-		return err;
+		return -2000 + err;
 	}
 	LOG_INF("ADS1299 ID: 0x%02x", id);
 
 	err = ads1299_apply_config(&config);
 	if (err) {
-		return err;
+		return -3000 + err;
 	}
 
 	return 0;
@@ -212,6 +297,11 @@ int ads1299_init_device(void)
 int ads1299_start_stream(void)
 {
 	int err;
+
+	err = ads1299_configure_data_pins();
+	if (err) {
+		return err;
+	}
 
 	gpio_pin_set_dt(&start_gpio, 1);
 	err = ads1299_cmd(ADS1299_CMD_START);
@@ -229,7 +319,9 @@ int ads1299_stop_stream(void)
 
 	streaming = false;
 	err = ads1299_cmd(ADS1299_CMD_STOP);
-	gpio_pin_set_dt(&start_gpio, 0);
+	if (data_pins_configured) {
+		gpio_pin_set_dt(&start_gpio, 0);
+	}
 	return err;
 }
 
@@ -240,6 +332,27 @@ int ads1299_read_id(uint8_t *id)
 	}
 
 	return ads1299_read_reg(ADS1299_REG_ID, id);
+}
+
+int ads1299_spi_loopback(uint8_t rx[3])
+{
+	uint8_t tx[3] = { 0xA5, 0x5A, 0xC3 };
+	int err;
+
+	if (!rx) {
+		return -EINVAL;
+	}
+	err = ads1299_spi_ready();
+	if (err) {
+		return err;
+	}
+	err = gpio_pin_configure_dt(&cs_gpio, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+
+	memset(rx, 0, 3);
+	return ads1299_transfer(tx, rx, sizeof(tx));
 }
 
 int ads1299_read_register(uint8_t reg, uint8_t *value)
@@ -333,32 +446,19 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 	if (!streaming) {
 		return -EAGAIN;
 	}
+	if (!data_pins_configured) {
+		return -EAGAIN;
+	}
 
-	uint8_t tx[ADS1299_FRAME_BYTES + 1] = { ADS1299_CMD_RDATA };
-	uint8_t rx[ADS1299_FRAME_BYTES + 1] = { 0 };
-	const struct spi_buf tx_buf = {
-		.buf = tx,
-		.len = sizeof(tx),
-	};
-	const struct spi_buf rx_buf = {
-		.buf = rx,
-		.len = sizeof(rx),
-	};
-	const struct spi_buf_set tx_set = {
-		.buffers = &tx_buf,
-		.count = 1,
-	};
-	const struct spi_buf_set rx_set = {
-		.buffers = &rx_buf,
-		.count = 1,
-	};
 	int err;
 
 	if (gpio_pin_get_dt(&drdy_gpio) <= 0) {
 		return -EAGAIN;
 	}
 
-	err = spi_transceive_dt(&ads1299_spi, &tx_set, &rx_set);
+	memset(spi_tx_buf, 0, sizeof(spi_tx_buf));
+	spi_tx_buf[0] = ADS1299_CMD_RDATA;
+	err = ads1299_transfer(spi_tx_buf, spi_rx_buf, ADS1299_FRAME_BYTES + 1);
 	if (err) {
 		return err;
 	}
@@ -366,9 +466,9 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 	sample->t_ms = k_uptime_get_32();
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		int base = 1 + 3 + i * 3;
-		uint32_t raw = ((uint32_t)rx[base] << 16) |
-			       ((uint32_t)rx[base + 1] << 8) |
-			       (uint32_t)rx[base + 2];
+		uint32_t raw = ((uint32_t)spi_rx_buf[base] << 16) |
+			       ((uint32_t)spi_rx_buf[base + 1] << 8) |
+			       (uint32_t)spi_rx_buf[base + 2];
 		sample->channel[i] = sign_extend_24(raw);
 	}
 

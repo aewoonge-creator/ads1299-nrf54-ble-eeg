@@ -3,6 +3,11 @@ description: Control GPIOs for TI ADS1299 EEG analog front-end
 compatible: "ti,ads1299-control"
 
 properties:
+  cs-gpios:
+    type: phandle-array
+    required: true
+    description: ADS1299 chip-select output, active low
+
   drdy-gpios:
     type: phandle-array
     required: true
@@ -17,4 +22,3 @@ properties:
     type: phandle-array
     required: true
     description: ADS1299 START output, active high
-

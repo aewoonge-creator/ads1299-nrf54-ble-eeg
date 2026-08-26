@@ -1,16 +1,19 @@
 /*
- * Example ADS1299 wiring for nRF54L15 DK.
+ * ADS1299 evaluation board wiring for nRF54L15 DK.
  *
- * Change these P1.xx values if your jumper wiring is different.
+ * Current wiring:
+ * ADS1299 J3-3   CLK/SCLK  -> nRF P0.00
+ * ADS1299 J3-7   CS        -> nRF P0.03
+ * ADS1299 J3-8   RESETB    -> nRF P0.04
+ * ADS1299 J3-11  DIN/MOSI  -> nRF P0.01
+ * ADS1299 J3-13  DOUT/MISO -> nRF P0.02
+ * ADS1299 J3-15  DRDYB     -> nRF P0.05
+ * ADS1299 J3-18  GND       -> nRF GND
+ * ADS1299 JP22   START     -> nRF P0.06
  *
- * ADS1299 SCLK  -> nRF P1.08
- * ADS1299 DIN   -> nRF P1.09  (MOSI)
- * ADS1299 DOUT  -> nRF P1.11  (MISO)
- * ADS1299 CS    -> nRF P1.12
- * ADS1299 DRDY  -> nRF P1.13
- * ADS1299 RESET -> nRF P1.14
- * ADS1299 START -> nRF P1.15
- * GND           -> GND
+ * Not connected:
+ * J3-1, J3-2, J3-4, J3-12, J3-14, J3-16, J3-17, J3-19, J3-20
+ *
  * DVDD level must match the nRF GPIO voltage domain.
  */
 
@@ -19,26 +22,27 @@
 / {
 	ads1299_control: ads1299-control {
 		compatible = "ti,ads1299-control";
-		drdy-gpios = <&gpio1 13 GPIO_ACTIVE_LOW>;
-		reset-gpios = <&gpio1 14 GPIO_ACTIVE_LOW>;
-		start-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;
+		cs-gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+		drdy-gpios = <&gpio0 5 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
+		start-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
 	};
 };
 
 &pinctrl {
 	spi21_ads1299_default: spi21_ads1299_default {
 		group1 {
-			psels = <NRF_PSEL(SPIM_SCK, 1, 8)>,
-				<NRF_PSEL(SPIM_MOSI, 1, 9)>,
-				<NRF_PSEL(SPIM_MISO, 1, 11)>;
+			psels = <NRF_PSEL(SPIM_SCK, 0, 0)>,
+				<NRF_PSEL(SPIM_MOSI, 0, 1)>,
+				<NRF_PSEL(SPIM_MISO, 0, 2)>;
 		};
 	};
 
 	spi21_ads1299_sleep: spi21_ads1299_sleep {
 		group1 {
-			psels = <NRF_PSEL(SPIM_SCK, 1, 8)>,
-				<NRF_PSEL(SPIM_MOSI, 1, 9)>,
-				<NRF_PSEL(SPIM_MISO, 1, 11)>;
+			psels = <NRF_PSEL(SPIM_SCK, 0, 0)>,
+				<NRF_PSEL(SPIM_MOSI, 0, 1)>,
+				<NRF_PSEL(SPIM_MISO, 0, 2)>;
 			low-power-enable;
 		};
 	};
@@ -47,7 +51,7 @@
 &spi21 {
 	compatible = "nordic,nrf-spim";
 	status = "okay";
-	cs-gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
+	cs-gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
 	pinctrl-0 = <&spi21_ads1299_default>;
 	pinctrl-1 = <&spi21_ads1299_sleep>;
 	pinctrl-names = "default", "sleep";
@@ -55,6 +59,6 @@
 	ads1299: ads1299@0 {
 		compatible = "ti,ads1299";
 		reg = <0>;
-		spi-max-frequency = <1000000>;
+		spi-max-frequency = <125000>;
 	};
 };

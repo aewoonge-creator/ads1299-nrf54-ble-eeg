@@ -709,6 +709,7 @@
       <details>
         <summary>고급 진단</summary>
         <button id="adsPingBtn">PING 테스트</button>
+        <button id="adsSpiLoopbackBtn">SPI Loopback</button>
         <label for="bleService">BLE service UUID</label>
         <input id="bleService" type="text" value="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
         <label for="bleChar">BLE notify characteristic UUID</label>
@@ -2418,9 +2419,24 @@ async function sendAds1299Command(command) {
   const line = command.trim();
   if (!line) return;
   setText("cmdState", "전송 중");
-  await state.bleRxCharacteristic.writeValue(new TextEncoder().encode(`${line}\n`));
+  await writeBleCommandLine(line);
   setText("cmdState", "준비됨");
   status(`명령 전송됨:\n${line}`);
+}
+
+async function writeBleCommandLine(line) {
+  const payload = new TextEncoder().encode(`${line}\n`);
+  const ch = state.bleRxCharacteristic;
+
+  if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
+    await ch.writeValueWithoutResponse(payload);
+    return;
+  }
+  if (ch.properties.write && ch.writeValueWithResponse) {
+    await ch.writeValueWithResponse(payload);
+    return;
+  }
+  await ch.writeValue(payload);
 }
 
 async function sendAds1299Commands(commands) {
@@ -2432,7 +2448,7 @@ async function sendAds1299Commands(commands) {
   }
   setText("cmdState", "전송 중");
   for (const line of lines) {
-    await state.bleRxCharacteristic.writeValue(new TextEncoder().encode(`${line}\n`));
+    await writeBleCommandLine(line);
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   setText("cmdState", "준비됨");
@@ -2581,6 +2597,7 @@ $("conditionB")?.addEventListener("change", () => {
 $("serialBtn").addEventListener("click", () => connectSerial().catch(err => status(String(err.stack || err))));
 $("bleBtn").addEventListener("click", () => connectBle().catch(err => status(String(err.stack || err))));
 $("adsPingBtn").addEventListener("click", () => sendAds1299Command("PING").catch(err => status(String(err.stack || err))));
+$("adsSpiLoopbackBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI LOOPBACK").catch(err => status(String(err.stack || err))));
 $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));

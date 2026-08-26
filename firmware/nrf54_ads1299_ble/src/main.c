@@ -26,6 +26,11 @@ static struct bt_conn *current_conn;
 static bool tx_notify_enabled;
 static char rx_line[160];
 static size_t rx_len;
+static char command_line[160];
+
+static void command_work_handler(struct k_work *work);
+K_WORK_DEFINE(command_work, command_work_handler);
+K_MUTEX_DEFINE(command_lock);
 
 static void ble_send_line(const char *line);
 static void handle_ads1299_command(const char *command);
@@ -103,7 +108,11 @@ static ssize_t rx_written(
 			rx_line[rx_len] = '\0';
 			if (rx_len > 0) {
 				LOG_INF("RX: %s", rx_line);
-				handle_ads1299_command(rx_line);
+				k_mutex_lock(&command_lock, K_FOREVER);
+				strncpy(command_line, rx_line, sizeof(command_line) - 1);
+				command_line[sizeof(command_line) - 1] = '\0';
+				k_mutex_unlock(&command_lock);
+				k_work_submit(&command_work);
 			}
 			rx_len = 0;
 			continue;
@@ -188,7 +197,14 @@ static void handle_ads1299_command(const char *command)
 
 	if (strcmp(command, "ADS1299 INIT") == 0) {
 		int err = ads1299_init_device();
-		ble_send_line(err == 0 ? "OK INIT\n" : "ERR INIT\n");
+		if (err == 0) {
+			ble_send_line("OK INIT\n");
+		} else {
+			char response[32];
+
+			snprintk(response, sizeof(response), "ERR INIT %d\n", err);
+			ble_send_line(response);
+		}
 		return;
 	}
 	if (strcmp(command, "ADS1299 START") == 0) {
@@ -199,6 +215,22 @@ static void handle_ads1299_command(const char *command)
 	if (strcmp(command, "ADS1299 STOP") == 0) {
 		int err = ads1299_stop_stream();
 		ble_send_line(err == 0 ? "OK STOP\n" : "ERR STOP\n");
+		return;
+	}
+	if (strcmp(command, "ADS1299 SPI LOOPBACK") == 0) {
+		uint8_t rx[3] = { 0 };
+		char response[64];
+		int err = ads1299_spi_loopback(rx);
+
+		if (err == 0) {
+			snprintk(response, sizeof(response),
+				"SPI LOOPBACK RX 0x%02X 0x%02X 0x%02X\n",
+				rx[0], rx[1], rx[2]);
+			ble_send_line(response);
+		} else {
+			snprintk(response, sizeof(response), "ERR SPI LOOPBACK %d\n", err);
+			ble_send_line(response);
+		}
 		return;
 	}
 	if (strcmp(command, "ADS1299 RREG ALL") == 0) {
@@ -236,7 +268,8 @@ static void handle_ads1299_command(const char *command)
 			snprintk(response, sizeof(response), "REG ID 0x%02X\n", id);
 			ble_send_line(response);
 		} else {
-			ble_send_line("ERR RREG\n");
+			snprintk(response, sizeof(response), "ERR RREG %d\n", err);
+			ble_send_line(response);
 		}
 		return;
 	}
@@ -250,7 +283,8 @@ static void handle_ads1299_command(const char *command)
 			snprintk(response, sizeof(response), "REG 0x%02X 0x%02X\n", reg, value);
 			ble_send_line(response);
 		} else {
-			ble_send_line("ERR RREG\n");
+			snprintk(response, sizeof(response), "ERR RREG %d\n", err);
+			ble_send_line(response);
 		}
 		return;
 	}
@@ -292,6 +326,20 @@ static void handle_ads1299_command(const char *command)
 	}
 
 	ble_send_line("ERR UNKNOWN_COMMAND\n");
+}
+
+static void command_work_handler(struct k_work *work)
+{
+	char command[160];
+
+	ARG_UNUSED(work);
+
+	k_mutex_lock(&command_lock, K_FOREVER);
+	strncpy(command, command_line, sizeof(command) - 1);
+	command[sizeof(command) - 1] = '\0';
+	k_mutex_unlock(&command_lock);
+
+	handle_ads1299_command(command);
 }
 
 int main(void)

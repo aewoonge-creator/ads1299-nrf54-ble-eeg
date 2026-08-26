@@ -24,6 +24,7 @@ int ads1299_init_device(void);
 int ads1299_start_stream(void);
 int ads1299_stop_stream(void);
 int ads1299_read_id(uint8_t *id);
+int ads1299_spi_loopback(uint8_t rx[3]);
 int ads1299_read_register(uint8_t reg, uint8_t *value);
 int ads1299_write_register(uint8_t reg, uint8_t value);
 int ads1299_apply_config(const struct ads1299_config *config);
