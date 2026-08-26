@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-25-register-map-collapsed">
+  <meta name="app-version" content="2026-08-26-short-test-command">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -2633,7 +2633,7 @@ $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
-$("adsTestBtn").addEventListener("click", () => sendAds1299Command("ADS1299 CONFIG TEST=ON MUX=TEST").catch(err => status(String(err.stack || err))));
+$("adsTestBtn").addEventListener("click", () => sendAds1299Command("TST").catch(err => status(String(err.stack || err))));
 $("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => sendAds1299Command(adsConfigCommand()).catch(err => status(String(err.stack || err))));
 $("adsApplyChannelsBtn").addEventListener("click", () => sendAds1299Command(adsChannelsCommand()).catch(err => status(String(err.stack || err))));

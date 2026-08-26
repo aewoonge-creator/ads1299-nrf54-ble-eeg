@@ -238,6 +238,21 @@ static void handle_ads1299_command(const char *command)
 		ble_send_line(err == 0 ? "OK STOP\n" : "ERR STOP\n");
 		return;
 	}
+	if (strcmp(command, "TST") == 0 ||
+	    strcmp(command, "ADS1299 TEST") == 0) {
+		struct ads1299_config config = {
+			.sample_rate_sps = 250,
+			.gain = 24,
+			.bias_enabled = true,
+			.lead_off_enabled = false,
+			.test_signal_enabled = true,
+			.enabled_channel_mask = 0xFF,
+		};
+		int err = ads1299_apply_config(&config);
+
+		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
+		return;
+	}
 	if (strcmp(command, "ADS1299 SPI LOOPBACK") == 0) {
 		uint8_t rx[3] = { 0 };
 		char response[64];
