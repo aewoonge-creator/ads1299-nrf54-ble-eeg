@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-26-register-log-safe">
+  <meta name="app-version" content="2026-08-26-persistent-reg-summary">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1412,7 +1412,7 @@ function estimateFs(rows, timeCol, fallback) {
   return med > 0 ? Math.round(1 / med) : fallback;
 }
 
-function loadDataset(headers, rows, name) {
+function loadDataset(headers, rows, name, options = {}) {
   state.headers = headers;
   state.rows = rows.filter(r => Object.values(r).some(Number.isFinite));
   state.channels = detectChannels(headers);
@@ -1427,7 +1427,9 @@ function loadDataset(headers, rows, name) {
   buildConditions();
   renderChannels();
   analyze();
-  status(`${name}\n${datasetHint(headers)}\n탐지 채널 ${state.channels.length}개, fs 추정 ${fs} Hz`);
+  if (!options.silent) {
+    status(`${name}\n${datasetHint(headers)}\n탐지 채널 ${state.channels.length}개, fs 추정 ${fs} Hz`);
+  }
 }
 
 function fillSelect(select, values, selected, labeler = v => v) {
@@ -2588,7 +2590,7 @@ function appendStreamLine(line, source) {
   updateConnectionCards();
   updateEegStatus();
   if (state.streamRows.length % 25 === 0) {
-    loadDataset(state.streamHeaders, state.streamRows.slice(), source);
+    loadDataset(state.streamHeaders, state.streamRows.slice(), source, { silent: true });
   }
 }
 
