@@ -526,7 +526,8 @@ int main(void)
 
 		poll_rtt_commands();
 
-		if (k_uptime_get() - last_auto_probe_ms > 3000) {
+		if (!ads1299_is_streaming() &&
+		    k_uptime_get() - last_auto_probe_ms > 3000) {
 			char probe[128];
 			char gpio[128];
 			char miso[128];

@@ -356,6 +356,11 @@ int ads1299_stop_stream(void)
 	return err;
 }
 
+bool ads1299_is_streaming(void)
+{
+	return streaming;
+}
+
 int ads1299_read_id(uint8_t *id)
 {
 	if (!id) {
@@ -890,6 +895,10 @@ int ads1299_apply_config(const struct ads1299_config *config)
 
 int ads1299_read_sample(struct ads1299_sample *sample)
 {
+	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
+	uint8_t frame[ADS1299_FRAME_BYTES + 1];
+	int err;
+
 	if (!sample) {
 		return -EINVAL;
 	}
@@ -900,25 +909,34 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 		return -EAGAIN;
 	}
 
-	int err;
-
-	if (gpio_pin_get_dt(&drdy_gpio) <= 0) {
+	if (gpio_pin_get_dt(&drdy_gpio) > 0) {
 		return -EAGAIN;
 	}
 
-	memset(spi_tx_buf, 0, sizeof(spi_tx_buf));
-	spi_tx_buf[0] = ADS1299_CMD_RDATA;
-	err = ads1299_transfer(spi_tx_buf, spi_rx_buf, ADS1299_FRAME_BYTES + 1);
+	err = bitbang_gpio_configure(gpio);
 	if (err) {
 		return err;
 	}
 
+	memset(frame, 0, sizeof(frame));
+
+	k_mutex_lock(&spi_lock, K_FOREVER);
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
+	bitbang_delay();
+	frame[0] = bitbang_transfer_byte(gpio, ADS1299_CMD_RDATA, ADS1299_BITBANG_MODE);
+	for (int i = 1; i < ARRAY_SIZE(frame); i++) {
+		frame[i] = bitbang_transfer_byte(gpio, 0x00, ADS1299_BITBANG_MODE);
+	}
+	bitbang_delay();
+	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
+	k_mutex_unlock(&spi_lock);
+
 	sample->t_ms = k_uptime_get_32();
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		int base = 1 + 3 + i * 3;
-		uint32_t raw = ((uint32_t)spi_rx_buf[base] << 16) |
-			       ((uint32_t)spi_rx_buf[base + 1] << 8) |
-			       (uint32_t)spi_rx_buf[base + 2];
+		uint32_t raw = ((uint32_t)frame[base] << 16) |
+			       ((uint32_t)frame[base + 1] << 8) |
+			       (uint32_t)frame[base + 2];
 		sample->channel[i] = sign_extend_24(raw);
 	}
 

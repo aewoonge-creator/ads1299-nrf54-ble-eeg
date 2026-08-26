@@ -24,6 +24,7 @@ struct ads1299_config {
 int ads1299_init_device(void);
 int ads1299_start_stream(void);
 int ads1299_stop_stream(void);
+bool ads1299_is_streaming(void);
 int ads1299_read_id(uint8_t *id);
 int ads1299_spi_loopback(uint8_t rx[3]);
 int ads1299_set_spi_mode(uint8_t mode);
