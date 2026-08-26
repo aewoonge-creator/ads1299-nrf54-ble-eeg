@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-26-centered-channel-lanes">
+  <meta name="app-version" content="2026-08-26-register-log-safe">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -242,6 +242,14 @@
 
     .inlineLog .status {
       margin-top: 0;
+    }
+
+    .compactStatus {
+      background: #f8fafc;
+      color: var(--ink);
+      font-family: Consolas, monospace;
+      font-size: 11px;
+      margin-bottom: 6px;
     }
 
     .adsTableWrap,
@@ -743,6 +751,7 @@
         <button id="adsRegBtn">Read Regs</button>
       </div>
       <div class="inlineLog">
+        <div id="adsRegSummary" class="status compactStatus">CONFIG1/2/3은 Read Regs를 누르면 여기에 표시됩니다.</div>
         <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
         <div id="eventLog" class="logBox"></div>
       </div>
@@ -1210,6 +1219,11 @@ function updateAdsRegisterValueFromLine(line) {
     if (byName) adsRegisterValues[reg.addr] = Number.parseInt(byName[1], 16);
   });
   renderAdsRegisterMap();
+  const configSummary = /ID\s*=\s*(?:0x)?([0-9a-f]{1,2}).*CONFIG1\s*=\s*(?:0x)?([0-9a-f]{1,2}).*CONFIG2\s*=\s*(?:0x)?([0-9a-f]{1,2}).*CONFIG3\s*=\s*(?:0x)?([0-9a-f]{1,2})/i.exec(text);
+  if (configSummary) {
+    setText("adsRegSummary",
+      `ID=0x${configSummary[1].toUpperCase()}  CONFIG1=0x${configSummary[2].toUpperCase()}  CONFIG2=0x${configSummary[3].toUpperCase()}  CONFIG3=0x${configSummary[4].toUpperCase()}`);
+  }
 }
 
 function appendLog(msg) {
@@ -2552,7 +2566,7 @@ function appendStreamLine(line, source) {
   updateConnectionCards();
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
-  if (/^(OK|ERR|REG|RX|PONG)\b/i.test(line.trim())) {
+  if (/^(ACK|OK|ERR|REG|RX|PONG|READY|AUTO|STREAM|SPI|BITBANG|GPIO|MISO)\b/i.test(line.trim())) {
     updateAdsRegisterValueFromLine(line);
     status(`${source}\n${line.trim()}`);
     return;
