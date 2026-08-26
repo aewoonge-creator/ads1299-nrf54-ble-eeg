@@ -12,6 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CONFIG_USE_SEGGER_RTT)
+#include <SEGGER_RTT.h>
+#endif
+
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
 #define UART_SERVICE_UUID_VAL BT_UUID_128_ENCODE(0x6e400001, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
@@ -26,6 +30,8 @@ static struct bt_conn *current_conn;
 static bool tx_notify_enabled;
 static char rx_line[160];
 static size_t rx_len;
+static char rtt_rx_line[160];
+static size_t rtt_rx_len;
 static char command_line[160];
 
 static void command_work_handler(struct k_work *work);
@@ -34,6 +40,7 @@ K_MUTEX_DEFINE(command_lock);
 
 static void ble_send_line(const char *line);
 static void handle_ads1299_command(const char *command);
+static void submit_command(const char *command);
 
 static bool command_has_token(const char *command, const char *token)
 {
@@ -107,16 +114,8 @@ static ssize_t rx_written(
 		if (c == '\n') {
 			rx_line[rx_len] = '\0';
 			if (rx_len > 0) {
-				char ack[180];
-
 				LOG_INF("RX: %s", rx_line);
-				snprintk(ack, sizeof(ack), "ACK %s\n", rx_line);
-				ble_send_line(ack);
-				k_mutex_lock(&command_lock, K_FOREVER);
-				strncpy(command_line, rx_line, sizeof(command_line) - 1);
-				command_line[sizeof(command_line) - 1] = '\0';
-				k_mutex_unlock(&command_lock);
-				k_work_submit(&command_work);
+				submit_command(rx_line);
 			}
 			rx_len = 0;
 			continue;
@@ -177,6 +176,10 @@ static void ble_send_line(const char *line)
 {
 	int err;
 
+#if defined(CONFIG_USE_SEGGER_RTT)
+	SEGGER_RTT_WriteString(0, line);
+#endif
+
 	if (!current_conn) {
 		return;
 	}
@@ -185,6 +188,20 @@ static void ble_send_line(const char *line)
 	if (err) {
 		LOG_WRN("Notify failed: %d", err);
 	}
+}
+
+static void submit_command(const char *command)
+{
+	char ack[180];
+
+	snprintk(ack, sizeof(ack), "ACK %s\n", command);
+	ble_send_line(ack);
+
+	k_mutex_lock(&command_lock, K_FOREVER);
+	strncpy(command_line, command, sizeof(command_line) - 1);
+	command_line[sizeof(command_line) - 1] = '\0';
+	k_mutex_unlock(&command_lock);
+	k_work_submit(&command_work);
 }
 
 static void handle_ads1299_command(const char *command)
@@ -368,6 +385,31 @@ static void command_work_handler(struct k_work *work)
 	handle_ads1299_command(command);
 }
 
+static void poll_rtt_commands(void)
+{
+#if defined(CONFIG_USE_SEGGER_RTT)
+	char c;
+
+	while (SEGGER_RTT_Read(0, &c, 1) == 1) {
+		if (c == '\r') {
+			continue;
+		}
+		if (c == '\n') {
+			rtt_rx_line[rtt_rx_len] = '\0';
+			if (rtt_rx_len > 0) {
+				LOG_INF("RTT RX: %s", rtt_rx_line);
+				submit_command(rtt_rx_line);
+			}
+			rtt_rx_len = 0;
+			continue;
+		}
+		if (rtt_rx_len < sizeof(rtt_rx_line) - 1) {
+			rtt_rx_line[rtt_rx_len++] = c;
+		}
+	}
+#endif
+}
+
 int main(void)
 {
 	int err;
@@ -385,10 +427,13 @@ int main(void)
 	}
 
 	LOG_INF("ADS1299 nRF54 BLE started");
+	ble_send_line("READY ADS1299 RTT/BLE\n");
 
 	while (1) {
 		struct ads1299_sample sample;
 		char line[160];
+
+		poll_rtt_commands();
 
 		if (ads1299_read_sample(&sample) == 0) {
 			snprintk(line, sizeof(line),
