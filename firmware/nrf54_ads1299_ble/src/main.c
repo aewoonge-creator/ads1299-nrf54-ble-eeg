@@ -67,9 +67,15 @@ static uint32_t command_get_u32(const char *command, const char *key, uint32_t f
 
 static uint8_t parse_channel_mask(const char *command)
 {
-	const char *pos = strstr(command, "ENABLE=");
+	const char *pos = strstr(command, "MASK=");
 	uint8_t mask = 0;
 
+	if (pos) {
+		pos += strlen("MASK=");
+		return (uint8_t)strtoul(pos, NULL, 0);
+	}
+
+	pos = strstr(command, "ENABLE=");
 	if (!pos) {
 		return ads_enabled_channel_mask;
 	}
@@ -512,6 +518,12 @@ static void handle_ads1299_command(const char *command)
 		if (err == 0) {
 			send_stream_header();
 		}
+		return;
+	}
+	if (strncmp(command, "ADS1299 STREAM MASK", 19) == 0) {
+		ads_enabled_channel_mask = parse_channel_mask(command);
+		ble_send_line("OK STREAM MASK\n");
+		send_stream_header();
 		return;
 	}
 
