@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-27-eight-channel-stream-display-filter">
+  <meta name="app-version" content="2026-08-27-stream-header-resync">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1173,6 +1173,15 @@ function copyGlobalAdsSettingsToChannels() {
   updateAdsChannelPreview();
 }
 
+function setAllAdsChannelsEnabled(enabled) {
+  adsChannelRows().forEach(row => {
+    row.querySelector(".ads-ch-enable").checked = enabled;
+    row.querySelector(".ads-ch-pd").checked = !enabled;
+  });
+  $("adsChannels").value = enabled ? "1,2,3,4,5,6,7,8" : "";
+  updateAdsChannelPreview();
+}
+
 function adsChannelTableCommands() {
   updateAdsChannelPreview();
   const commands = adsChannelRows().map((row, idx) => `ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte(chSetValue(row))}`);
@@ -1211,6 +1220,21 @@ function syncPlotSelectionToAdsChannels() {
     renderChannels();
     analyze();
   }
+}
+
+function resetLiveStream(reason = "") {
+  state.streamHeaders = null;
+  state.streamRows = [];
+  state.rows = [];
+  state.headers = [];
+  state.channels = [];
+  state.selected = new Set();
+  state.lastAnalysis = null;
+  updateMetrics();
+  renderPowerBars();
+  renderChannels();
+  draw();
+  if (reason) status(reason);
 }
 
 function renderAdsRegisterMap() {
@@ -2490,6 +2514,9 @@ async function connectBle() {
   state.bleTxCharacteristic = ch;
   state.bleRxCharacteristic = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
   state.streamStartedAt = performance.now();
+  state.streamHeaders = null;
+  state.streamRows = [];
+  state.adsDesiredChannels = null;
   updateConnectionCards();
   status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
 }
@@ -2629,6 +2656,10 @@ function appendStreamLine(line, source) {
     status(`${source}\n${line.trim()}`);
     return;
   }
+  if (allNumeric && state.streamHeaders && cells.length !== state.streamHeaders.length) {
+    state.streamHeaders = null;
+    state.streamRows = [];
+  }
   if (!state.streamHeaders && allNumeric) {
     state.streamHeaders = ["t_ms", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
     state.streamRows = [];
@@ -2728,11 +2759,15 @@ $("adsSpiProbeBtn").addEventListener("click", () => sendAds1299Command("ADS1299 
 $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => {
+  state.streamHeaders = null;
+  state.streamRows = [];
   rememberDesiredAdsChannels();
   sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err)));
 });
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
 $("adsTestBtn").addEventListener("click", () => {
+  state.streamHeaders = null;
+  state.streamRows = [];
   rememberDesiredAdsChannels();
   sendAds1299Command(adsTestCommand()).catch(err => status(String(err.stack || err)));
 });
@@ -2783,8 +2818,20 @@ document.querySelectorAll(".tab").forEach(btn => {
   $(id).addEventListener("change", updateAdsChannelPreview);
 });
 
-$("selectAll").addEventListener("click", () => { state.selected = new Set(state.channels); renderChannels(); analyze(); });
-$("clearChannels").addEventListener("click", () => { state.selected = new Set(); renderChannels(); analyze(); });
+$("selectAll").addEventListener("click", () => {
+  setAllAdsChannelsEnabled(true);
+  state.adsDesiredChannels = null;
+  state.selected = new Set(state.channels);
+  renderChannels();
+  analyze();
+});
+$("clearChannels").addEventListener("click", () => {
+  setAllAdsChannelsEnabled(false);
+  state.adsDesiredChannels = [];
+  state.selected = new Set();
+  renderChannels();
+  analyze();
+});
 
 function channelCoreName(ch) {
   return String(ch).replace(/^EEG_/i, "").replace(/^RAW_/i, "").toUpperCase();
