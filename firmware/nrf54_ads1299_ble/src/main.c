@@ -33,6 +33,12 @@ static size_t rx_len;
 static char rtt_rx_line[160];
 static size_t rtt_rx_len;
 static char command_line[160];
+static uint32_t ads_sample_rate_sps = 250;
+static uint32_t ads_gain = 24;
+static bool ads_bias_enabled = true;
+static bool ads_lead_off_enabled;
+static bool ads_test_signal_enabled = true;
+static uint8_t ads_enabled_channel_mask = 0xFF;
 
 static void command_work_handler(struct k_work *work);
 K_WORK_DEFINE(command_work, command_work_handler);
@@ -65,7 +71,7 @@ static uint8_t parse_channel_mask(const char *command)
 	uint8_t mask = 0;
 
 	if (!pos) {
-		return 0xFF;
+		return ads_enabled_channel_mask;
 	}
 
 	pos += strlen("ENABLE=");
@@ -88,6 +94,20 @@ static uint8_t parse_channel_mask(const char *command)
 	}
 
 	return mask;
+}
+
+static int apply_current_ads_config(void)
+{
+	struct ads1299_config config = {
+		.sample_rate_sps = ads_sample_rate_sps,
+		.gain = ads_gain,
+		.bias_enabled = ads_bias_enabled,
+		.lead_off_enabled = ads_lead_off_enabled,
+		.test_signal_enabled = ads_test_signal_enabled,
+		.enabled_channel_mask = ads_enabled_channel_mask,
+	};
+
+	return ads1299_apply_config(&config);
 }
 
 static void ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
@@ -250,15 +270,8 @@ static void handle_ads1299_command(const char *command)
 	}
 	if (strcmp(command, "TST") == 0 ||
 	    strcmp(command, "ADS1299 TEST") == 0) {
-		struct ads1299_config config = {
-			.sample_rate_sps = 250,
-			.gain = 24,
-			.bias_enabled = true,
-			.lead_off_enabled = false,
-			.test_signal_enabled = true,
-			.enabled_channel_mask = 0xFF,
-		};
-		int err = ads1299_apply_config(&config);
+		ads_test_signal_enabled = true;
+		int err = apply_current_ads_config();
 
 		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
 		return;
@@ -441,29 +454,21 @@ static void handle_ads1299_command(const char *command)
 		return;
 	}
 	if (strncmp(command, "ADS1299 CONFIG", 14) == 0) {
-		struct ads1299_config config = {
-			.sample_rate_sps = command_get_u32(command, "RATE=", 250),
-			.gain = command_get_u32(command, "GAIN=", 24),
-			.bias_enabled = command_has_token(command, "BIAS=ON"),
-			.lead_off_enabled = command_has_token(command, "LOFF=ON"),
-			.test_signal_enabled = command_has_token(command, "TEST=ON") ||
-				command_has_token(command, "MUX=TEST"),
-			.enabled_channel_mask = 0xFF,
-		};
-		int err = ads1299_apply_config(&config);
+		ads_sample_rate_sps = command_get_u32(command, "RATE=", ads_sample_rate_sps);
+		ads_gain = command_get_u32(command, "GAIN=", ads_gain);
+		ads_bias_enabled = command_has_token(command, "BIAS=ON");
+		ads_lead_off_enabled = command_has_token(command, "LOFF=ON");
+		ads_test_signal_enabled = command_has_token(command, "TEST=ON") ||
+			command_has_token(command, "MUX=TEST");
+		ads_enabled_channel_mask = parse_channel_mask(command);
+
+		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CONFIG\n" : "ERR CONFIG\n");
 		return;
 	}
 	if (strncmp(command, "ADS1299 CHANNELS", 16) == 0) {
-		struct ads1299_config config = {
-			.sample_rate_sps = 250,
-			.gain = 24,
-			.bias_enabled = true,
-			.lead_off_enabled = false,
-			.test_signal_enabled = false,
-			.enabled_channel_mask = parse_channel_mask(command),
-		};
-		int err = ads1299_apply_config(&config);
+		ads_enabled_channel_mask = parse_channel_mask(command);
+		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CHANNELS\n" : "ERR CHANNELS\n");
 		return;
 	}

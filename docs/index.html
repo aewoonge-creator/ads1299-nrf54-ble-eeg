@@ -1180,6 +1180,23 @@ function adsChannelTableCommands() {
   return commands;
 }
 
+function enabledAdsChannelsFromTable() {
+  return adsChannelRows()
+    .filter(row => row.querySelector(".ads-ch-enable").checked && !row.querySelector(".ads-ch-pd").checked)
+    .map(row => Number(row.dataset.adsCh))
+    .filter(ch => ch >= 1 && ch <= 8);
+}
+
+function syncPlotSelectionToAdsChannels() {
+  const enabledNames = enabledAdsChannelsFromTable().map(ch => `ch${ch}`);
+  const available = enabledNames.filter(ch => state.channels.includes(ch));
+  if (available.length) {
+    state.selected = new Set(available);
+    renderChannels();
+    analyze();
+  }
+}
+
 function renderAdsRegisterMap() {
   const body = $("adsRegisterMap");
   if (!body) return;
@@ -1413,10 +1430,16 @@ function estimateFs(rows, timeCol, fallback) {
 }
 
 function loadDataset(headers, rows, name, options = {}) {
+  const previousSelected = new Set(state.selected || []);
   state.headers = headers;
   state.rows = rows.filter(r => Object.values(r).some(Number.isFinite));
   state.channels = detectChannels(headers);
-  state.selected = new Set(state.channels.slice(0, Math.min(8, state.channels.length)));
+  if (options.preserveSelection || options.silent) {
+    const kept = state.channels.filter(ch => previousSelected.has(ch));
+    state.selected = new Set(kept.length ? kept : state.channels.slice(0, Math.min(8, state.channels.length)));
+  } else {
+    state.selected = new Set(state.channels.slice(0, Math.min(8, state.channels.length)));
+  }
   state.sourceName = name;
   const timeCol = detectTimeColumn(headers);
   const timeOptions = timeColumnOptions(headers);
@@ -2526,6 +2549,7 @@ async function sendAds1299Commands(commands) {
 }
 
 function adsConfigCommand() {
+  const enabled = enabledAdsChannelsFromTable();
   return [
     "ADS1299 CONFIG",
     `RATE=${$("adsRate").value}`,
@@ -2534,12 +2558,29 @@ function adsConfigCommand() {
     `REF=${$("adsRef").value}`,
     `BIAS=${$("adsBiasOn").checked ? "ON" : "OFF"}`,
     `LOFF=${$("adsLoffOn").checked ? "ON" : "OFF"}`,
-    `TEST=${$("adsTestOn").checked ? "ON" : "OFF"}`
+    `TEST=${$("adsTestOn").checked ? "ON" : "OFF"}`,
+    `ENABLE=${enabled.length ? enabled.join(",") : "NONE"}`
+  ].join(" ");
+}
+
+function adsTestCommand() {
+  const enabled = enabledAdsChannelsFromTable();
+  return [
+    "ADS1299 CONFIG",
+    `RATE=${$("adsRate").value}`,
+    `GAIN=${$("adsGain").value}`,
+    "MUX=TEST",
+    `REF=${$("adsRef").value}`,
+    `BIAS=${$("adsBiasOn").checked ? "ON" : "OFF"}`,
+    `LOFF=${$("adsLoffOn").checked ? "ON" : "OFF"}`,
+    "TEST=ON",
+    `ENABLE=${enabled.length ? enabled.join(",") : "NONE"}`
   ].join(" ");
 }
 
 function adsChannelsCommand() {
-  const enabled = $("adsApplyChannelsOn").checked ? $("adsChannels").value.trim() : "";
+  const tableEnabled = enabledAdsChannelsFromTable();
+  const enabled = $("adsApplyChannelsOn").checked ? (tableEnabled.length ? tableEnabled.join(",") : $("adsChannels").value.trim()) : "";
   return `ADS1299 CHANNELS ENABLE=${enabled || "NONE"}`;
 }
 
@@ -2673,15 +2714,23 @@ $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err))));
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
-$("adsTestBtn").addEventListener("click", () => sendAds1299Command("TST").catch(err => status(String(err.stack || err))));
+$("adsTestBtn").addEventListener("click", () => sendAds1299Command(adsTestCommand()).catch(err => status(String(err.stack || err))));
 $("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => sendAds1299Command(adsConfigCommand()).catch(err => status(String(err.stack || err))));
-$("adsApplyChannelsBtn").addEventListener("click", () => sendAds1299Command(adsChannelsCommand()).catch(err => status(String(err.stack || err))));
+$("adsApplyChannelsBtn").addEventListener("click", () => {
+  sendAds1299Command(adsChannelsCommand())
+    .then(syncPlotSelectionToAdsChannels)
+    .catch(err => status(String(err.stack || err)));
+});
 $("adsCopyGlobalBtn").addEventListener("click", () => {
   copyGlobalAdsSettingsToChannels();
   status("전역 ADS1299 설정을 채널별 표에 복사했습니다.");
 });
-$("adsApplyChannelTableBtn").addEventListener("click", () => sendAds1299Commands(adsChannelTableCommands()).catch(err => status(String(err.stack || err))));
+$("adsApplyChannelTableBtn").addEventListener("click", () => {
+  sendAds1299Commands(adsChannelTableCommands())
+    .then(syncPlotSelectionToAdsChannels)
+    .catch(err => status(String(err.stack || err)));
+});
 $("adsReadRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 RREG ${$("adsRegAddr").value.trim()}`).catch(err => status(String(err.stack || err))));
 $("adsWriteRegBtn").addEventListener("click", () => {
   rememberManualRegisterWrite($("adsRegAddr").value.trim(), $("adsRegValue").value.trim());

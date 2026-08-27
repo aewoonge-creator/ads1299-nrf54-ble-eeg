@@ -1,7 +1,7 @@
 /*
  * ADS1299 evaluation board wiring for nRF54L15 DK.
  *
- * Current wiring:
+ * Current signal wiring:
  * ADS1299 J3-3   CLK/SCLK  -> nRF P0.00
  * ADS1299 J3-7   CS        -> nRF P0.03
  * ADS1299 J3-8   RESETB    -> nRF P0.04
@@ -10,6 +10,15 @@
  * ADS1299 J3-15  DRDYB     -> nRF P0.05
  * ADS1299 J3-18  GND       -> nRF GND
  * ADS1299 JP22   START     -> nRF P0.06
+ *
+ * Current power wiring:
+ * ADS1299 J4-10  VCC_5V    <- nRF VBUS/5V
+ * ADS1299 J4-9   VCC_3.3V  <- nRF 3.3V
+ * ADS1299 J4-8   GND       <- nRF GND
+ *
+ * Power check:
+ * TP7  - TP8 = about 5 V
+ * TP10 - TP8 = about 3.3 V
  *
  * Not connected:
  * J3-1, J3-2, J3-4, J3-12, J3-14, J3-16, J3-17, J3-19, J3-20
