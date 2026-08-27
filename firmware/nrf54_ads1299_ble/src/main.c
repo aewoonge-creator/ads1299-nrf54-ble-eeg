@@ -118,31 +118,24 @@ static int apply_current_ads_config(void)
 
 static void send_stream_header(void)
 {
-	char line[80];
-	size_t used = 0;
-
-	used += snprintk(line + used, sizeof(line) - used, "t_ms");
-	for (int i = 0; i < ADS1299_CHANNEL_COUNT && used < sizeof(line); i++) {
-		if (ads_enabled_channel_mask & BIT(i)) {
-			used += snprintk(line + used, sizeof(line) - used, ",ch%d", i + 1);
-		}
-	}
-	snprintk(line + MIN(used, sizeof(line) - 1), sizeof(line) - MIN(used, sizeof(line) - 1), "\n");
-	ble_send_line(line);
+	ble_send_line("t_ms,ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8\n");
 }
 
 static void send_stream_sample(const struct ads1299_sample *sample)
 {
 	char line[160];
-	size_t used = 0;
 
-	used += snprintk(line + used, sizeof(line) - used, "%u", sample->t_ms);
-	for (int i = 0; i < ADS1299_CHANNEL_COUNT && used < sizeof(line); i++) {
-		if (ads_enabled_channel_mask & BIT(i)) {
-			used += snprintk(line + used, sizeof(line) - used, ",%d", sample->channel[i]);
-		}
-	}
-	snprintk(line + MIN(used, sizeof(line) - 1), sizeof(line) - MIN(used, sizeof(line) - 1), "\n");
+	snprintk(line, sizeof(line),
+		"%u,%d,%d,%d,%d,%d,%d,%d,%d\n",
+		sample->t_ms,
+		sample->channel[0],
+		sample->channel[1],
+		sample->channel[2],
+		sample->channel[3],
+		sample->channel[4],
+		sample->channel[5],
+		sample->channel[6],
+		sample->channel[7]);
 	ble_send_line(line);
 }
 
