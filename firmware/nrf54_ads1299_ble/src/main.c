@@ -110,6 +110,36 @@ static int apply_current_ads_config(void)
 	return ads1299_apply_config(&config);
 }
 
+static void send_stream_header(void)
+{
+	char line[80];
+	size_t used = 0;
+
+	used += snprintk(line + used, sizeof(line) - used, "t_ms");
+	for (int i = 0; i < ADS1299_CHANNEL_COUNT && used < sizeof(line); i++) {
+		if (ads_enabled_channel_mask & BIT(i)) {
+			used += snprintk(line + used, sizeof(line) - used, ",ch%d", i + 1);
+		}
+	}
+	snprintk(line + MIN(used, sizeof(line) - 1), sizeof(line) - MIN(used, sizeof(line) - 1), "\n");
+	ble_send_line(line);
+}
+
+static void send_stream_sample(const struct ads1299_sample *sample)
+{
+	char line[160];
+	size_t used = 0;
+
+	used += snprintk(line + used, sizeof(line) - used, "%u", sample->t_ms);
+	for (int i = 0; i < ADS1299_CHANNEL_COUNT && used < sizeof(line); i++) {
+		if (ads_enabled_channel_mask & BIT(i)) {
+			used += snprintk(line + used, sizeof(line) - used, ",%d", sample->channel[i]);
+		}
+	}
+	snprintk(line + MIN(used, sizeof(line) - 1), sizeof(line) - MIN(used, sizeof(line) - 1), "\n");
+	ble_send_line(line);
+}
+
 static void ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
 	tx_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
@@ -261,6 +291,9 @@ static void handle_ads1299_command(const char *command)
 	if (strcmp(command, "ADS1299 START") == 0) {
 		int err = ads1299_start_stream();
 		ble_send_line(err == 0 ? "OK START\n" : "ERR START\n");
+		if (err == 0) {
+			send_stream_header();
+		}
 		return;
 	}
 	if (strcmp(command, "ADS1299 STOP") == 0) {
@@ -274,6 +307,9 @@ static void handle_ads1299_command(const char *command)
 		int err = apply_current_ads_config();
 
 		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
+		if (err == 0) {
+			send_stream_header();
+		}
 		return;
 	}
 	if (strcmp(command, "ADS1299 SPI LOOPBACK") == 0) {
@@ -464,12 +500,18 @@ static void handle_ads1299_command(const char *command)
 
 		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CONFIG\n" : "ERR CONFIG\n");
+		if (err == 0) {
+			send_stream_header();
+		}
 		return;
 	}
 	if (strncmp(command, "ADS1299 CHANNELS", 16) == 0) {
 		ads_enabled_channel_mask = parse_channel_mask(command);
 		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CHANNELS\n" : "ERR CHANNELS\n");
+		if (err == 0) {
+			send_stream_header();
+		}
 		return;
 	}
 
@@ -583,18 +625,7 @@ int main(void)
 
 		sample_err = ads1299_read_sample(&sample);
 		if (sample_err == 0) {
-			snprintk(line, sizeof(line),
-				"%u,%d,%d,%d,%d,%d,%d,%d,%d\n",
-				sample.t_ms,
-				sample.channel[0],
-				sample.channel[1],
-				sample.channel[2],
-				sample.channel[3],
-				sample.channel[4],
-				sample.channel[5],
-				sample.channel[6],
-				sample.channel[7]);
-			ble_send_line(line);
+			send_stream_sample(&sample);
 		} else if (ads1299_is_streaming() &&
 			   k_uptime_get() - last_stream_status_ms > 1000) {
 			last_stream_status_ms = k_uptime_get();
