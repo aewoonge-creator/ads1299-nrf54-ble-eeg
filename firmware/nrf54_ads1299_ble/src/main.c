@@ -285,7 +285,14 @@ static void handle_ads1299_command(const char *command)
 	if (strcmp(command, "ADS1299 INIT") == 0) {
 		int err = ads1299_init_device();
 		if (err == 0) {
+			ads_sample_rate_sps = 250;
+			ads_gain = 24;
+			ads_bias_enabled = true;
+			ads_lead_off_enabled = false;
+			ads_test_signal_enabled = true;
+			ads_enabled_channel_mask = 0xFF;
 			ble_send_line("OK INIT\n");
+			send_stream_header();
 		} else {
 			char response[32];
 
@@ -309,7 +316,12 @@ static void handle_ads1299_command(const char *command)
 	}
 	if (strcmp(command, "TST") == 0 ||
 	    strcmp(command, "ADS1299 TEST") == 0) {
+		ads_sample_rate_sps = 250;
+		ads_gain = 24;
+		ads_bias_enabled = true;
+		ads_lead_off_enabled = false;
 		ads_test_signal_enabled = true;
+		ads_enabled_channel_mask = 0xFF;
 		int err = apply_current_ads_config();
 
 		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
