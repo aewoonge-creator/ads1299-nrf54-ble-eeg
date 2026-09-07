@@ -1804,9 +1804,10 @@ function parseCsv(text) {
   }
   row.push(field.replace(/\r$/, ""));
   if (row.some(v => v.trim() !== "")) rows.push(row);
-  if (rows.length < 2) return { headers: [], rows: [] };
-  const headers = rows[0].map(h => h.trim());
-  const data = rows.slice(1).map(r => {
+  const csvRows = rows.filter(r => !String(r[0] || "").trim().startsWith("#"));
+  if (csvRows.length < 2) return { headers: [], rows: [] };
+  const headers = csvRows[0].map(h => h.trim());
+  const data = csvRows.slice(1).map(r => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = Number.parseFloat(r[i]));
     return obj;
@@ -1848,17 +1849,21 @@ function isKnownMetaColumn(name) {
 }
 
 function detectTimeColumn(headers) {
-  const candidates = ["Timestamp", "TimeStamp", "sessionTime", "trialTime", "time"];
+  const candidates = ["t_ms", "time_ms", "Timestamp", "TimeStamp", "sessionTime", "trialTime", "time"];
   return candidates.find(c => headers.includes(c)) || headers[0] || "";
 }
 
 function timeColumnOptions(headers) {
-  const likely = headers.filter(h => /^(timestamp|time|sessiontime|trialtime|sample|samples|t)$/i.test(h));
+  const likely = headers.filter(h => /^(timestamp|time|time_ms|t_ms|sessiontime|trialtime|sample|samples|t)$/i.test(h));
   return ["__sample_index__", ...likely];
 }
 
 function timeColumnLabel(value) {
   return value === "__sample_index__" ? "sample index (fs 기준)" : value;
+}
+
+function timeColumnScaleToSeconds(timeCol) {
+  return /(^t_ms$|_ms$|msec|millisecond)/i.test(timeCol || "") ? 0.001 : 1;
 }
 
 function estimateFs(rows, timeCol, fallback) {
@@ -1872,7 +1877,8 @@ function estimateFs(rows, timeCol, fallback) {
   if (!diffs.length) return fallback;
   diffs.sort((a, b) => a - b);
   const med = diffs[Math.floor(diffs.length / 2)];
-  return med > 0 ? Math.round(1 / med) : fallback;
+  const medSec = med * timeColumnScaleToSeconds(timeCol);
+  return medSec > 0 ? Math.round(1 / medSec) : fallback;
 }
 
 function loadDataset(headers, rows, name, options = {}) {
@@ -1926,8 +1932,9 @@ function sliceRows() {
   const hasTime = timeCol && state.rows.some(r => Number.isFinite(r[timeCol]));
   if (!hasTime) return { rows: state.rows.slice(Math.floor(start * fs), Math.floor((start + dur) * fs)), fs, timeCol };
   const first = state.rows.find(r => Number.isFinite(r[timeCol]))[timeCol];
+  const scale = timeColumnScaleToSeconds(timeCol);
   return {
-    rows: state.rows.filter(r => Number.isFinite(r[timeCol]) && r[timeCol] - first >= start && r[timeCol] - first <= start + dur),
+    rows: state.rows.filter(r => Number.isFinite(r[timeCol]) && (r[timeCol] - first) * scale >= start && (r[timeCol] - first) * scale <= start + dur),
     fs,
     timeCol
   };
@@ -1954,7 +1961,8 @@ function rowsByCondition(condition, dataset = datasetView()) {
       const vals = dataset.rows.map(r => r[timeCol]).filter(Number.isFinite);
       if (vals.length) {
         const first = Math.min(...vals);
-        const byTime = dataset.rows.filter(r => Number.isFinite(r[timeCol]) && r[timeCol] - first >= condition.start && r[timeCol] - first <= condition.end);
+        const scale = timeColumnScaleToSeconds(timeCol);
+        const byTime = dataset.rows.filter(r => Number.isFinite(r[timeCol]) && (r[timeCol] - first) * scale >= condition.start && (r[timeCol] - first) * scale <= condition.end);
         if (byTime.length) return byTime;
       }
     }
@@ -1974,7 +1982,7 @@ function currentDurationSec() {
   const timeCol = $("timeColumn").value;
   if (timeCol && timeCol !== "__sample_index__") {
     const vals = state.rows.map(r => r[timeCol]).filter(Number.isFinite);
-    if (vals.length > 1) return Math.max(...vals) - Math.min(...vals);
+    if (vals.length > 1) return (Math.max(...vals) - Math.min(...vals)) * timeColumnScaleToSeconds(timeCol);
   }
   return state.rows.length / fs;
 }
@@ -3129,7 +3137,8 @@ function downloadRowsCsv({ headers, rows, withMeta, prefix }) {
     status("저장할 stream 데이터가 아직 없습니다.");
     return;
   }
-  const lines = withMeta ? [...adsMetadataLines(), headers.join(",")] : [headers.join(",")];
+  const rate = actualSavedRate(headers, rows);
+  const lines = withMeta ? [...adsMetadataLines(headers, rows, rate), headers.join(",")] : [headers.join(",")];
   rows.forEach(row => {
     lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
   });
@@ -3141,17 +3150,38 @@ function downloadRowsCsv({ headers, rows, withMeta, prefix }) {
   link.download = `${prefix}_${stamp}.csv`;
   link.click();
   URL.revokeObjectURL(url);
-  status(`CSV 저장됨: ${link.download}\n샘플 ${rows.length}개`);
+  const rateText = Number.isFinite(rate.hz) ? `\n실제 저장 Hz(t_ms 기준): ${rate.hz.toFixed(2)} Hz` : "";
+  status(`CSV 저장됨: ${link.download}\n샘플 ${rows.length}개${rateText}`);
 }
 
-function adsMetadataLines() {
+function actualSavedRate(headers, rows) {
+  const timeCol = headers?.find(h => /^(t_ms|time_ms|timestamp|time|sessiontime|trialtime)$/i.test(h));
+  if (!timeCol || !rows || rows.length < 2) {
+    return { timeCol: timeCol || "", samples: rows?.length || 0, durationSec: NaN, hz: NaN };
+  }
+  const vals = rows.map(row => row[timeCol]).filter(Number.isFinite);
+  if (vals.length < 2) {
+    return { timeCol, samples: vals.length, durationSec: NaN, hz: NaN };
+  }
+  const durationSec = (vals[vals.length - 1] - vals[0]) * timeColumnScaleToSeconds(timeCol);
+  const hz = durationSec > 0 ? (vals.length - 1) / durationSec : NaN;
+  return { timeCol, samples: vals.length, durationSec, hz };
+}
+
+function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows, rate = actualSavedRate(headers, rows)) {
   const regs = adsRegisters
     .map(reg => `${reg.name}=${Number.isFinite(adsRegisterValues[reg.addr]) ? hexByte(adsRegisterValues[reg.addr]) : "--"}`)
     .join(" ");
+  const actualHz = Number.isFinite(rate.hz) ? rate.hz.toFixed(4) : "";
+  const duration = Number.isFinite(rate.durationSec) ? rate.durationSec.toFixed(4) : "";
   return [
     `# source=${state.sourceName || "BLE ADS1299"}`,
     `# saved_at=${new Date().toISOString()}`,
-    `# ads_rate_sps=${$("adsRate")?.value || ""}`,
+    `# ads_config_rate_sps=${$("adsRate")?.value || ""}`,
+    `# actual_saved_rate_hz=${actualHz}`,
+    `# actual_rate_time_column=${rate.timeCol || ""}`,
+    `# saved_samples=${rows?.length || 0}`,
+    `# saved_duration_s=${duration}`,
     `# ads_gain=${$("adsGain")?.value || ""}`,
     `# ads_mux=${$("adsMux")?.value || ""}`,
     `# ads_reference=${$("adsRef")?.value || ""}`,

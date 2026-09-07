@@ -116,26 +116,51 @@ static int apply_current_ads_config(void)
 	return ads1299_apply_config(&config);
 }
 
+static uint8_t stream_channel_mask(void)
+{
+	return ads_enabled_channel_mask ? ads_enabled_channel_mask : 0xFF;
+}
+
 static void send_stream_header(void)
 {
-	ble_send_line("t_ms,ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8\n");
+	char line[80];
+	size_t used;
+	uint8_t mask = stream_channel_mask();
+
+	used = snprintk(line, sizeof(line), "t_ms");
+	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
+		if ((mask & BIT(i)) == 0) {
+			continue;
+		}
+		if (used < sizeof(line)) {
+			used += snprintk(line + used, sizeof(line) - used, ",ch%d", i + 1);
+		}
+	}
+	if (used < sizeof(line)) {
+		snprintk(line + used, sizeof(line) - used, "\n");
+	}
+	ble_send_line(line);
 }
 
 static void send_stream_sample(const struct ads1299_sample *sample)
 {
 	char line[160];
+	size_t used;
+	uint8_t mask = stream_channel_mask();
 
-	snprintk(line, sizeof(line),
-		"%u,%d,%d,%d,%d,%d,%d,%d,%d\n",
-		sample->t_ms,
-		sample->channel[0],
-		sample->channel[1],
-		sample->channel[2],
-		sample->channel[3],
-		sample->channel[4],
-		sample->channel[5],
-		sample->channel[6],
-		sample->channel[7]);
+	used = snprintk(line, sizeof(line), "%u", sample->t_ms);
+	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
+		if ((mask & BIT(i)) == 0) {
+			continue;
+		}
+		if (used < sizeof(line)) {
+			used += snprintk(line + used, sizeof(line) - used, ",%d",
+					 sample->channel[i]);
+		}
+	}
+	if (used < sizeof(line)) {
+		snprintk(line + used, sizeof(line) - used, "\n");
+	}
 	ble_send_line(line);
 }
 
@@ -650,7 +675,7 @@ int main(void)
 			ble_send_line(line);
 		}
 
-		k_sleep(K_MSEC(20));
+		k_sleep(K_MSEC(1));
 	}
 
 	return 0;
