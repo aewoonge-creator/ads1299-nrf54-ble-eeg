@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-test-toggle-autostart">
+  <meta name="app-version" content="2026-09-07-test-toggle-manual-start">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -969,9 +969,9 @@
     <div class="checks">
       <label class="check"><input id="adsBiasOn" type="checkbox" checked>BIAS</label>
       <label class="check"><input id="adsLoffOn" type="checkbox">Lead-off</label>
-      <label class="check"><input id="adsTestOn" type="checkbox">Test</label>
       <label class="check"><input id="adsApplyChannelsOn" type="checkbox" checked>CH enable</label>
     </div>
+    <input id="adsTestOn" type="checkbox" class="hidden" aria-hidden="true">
     <button id="adsApplyChannelsBtn">Apply Channels</button>
     <h2>채널별 설정</h2>
     <div class="adsTableWrap">
@@ -1471,16 +1471,13 @@ function currentPlotTargetLabel() {
   return $("adsTestOn").checked || $("adsMux").value === "TEST" ? "내부 Test Signal" : "전극 입력";
 }
 
-async function applyAdsMode(name, configure, options = {}) {
+async function applyAdsMode(name, configure) {
   if (typeof configure === "function") configure();
   rememberDesiredAdsChannels();
   resetLiveStream(`${name} 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.`);
   await sendAds1299Commands(adsFullConfigCommands());
-  if (options.start) {
-    await sendAds1299Command("ADS1299 START");
-  }
   syncPlotSelectionToAdsChannels();
-  status(`${name} 적용됨${options.start ? " + Start 전송됨" : ""}\n현재 plot 대상: ${currentPlotTargetLabel()}\nCONFIG2가 0xC0이면 Test OFF, 0xD0이면 Test ON입니다.`);
+  status(`${name} 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 현재 설정으로 새 plot을 시작합니다.\nCONFIG2가 0xC0이면 Test OFF, 0xD0이면 Test ON입니다.`);
 }
 
 function enabledAdsChannelsFromTable() {
@@ -3215,10 +3212,10 @@ $("adsStartBtn").addEventListener("click", () => {
 });
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
 $("adsTestOnBtn").addEventListener("click", () => {
-  applyAdsMode("Test ON", () => setAdsTestMode(true), { start: true }).catch(err => status(String(err.stack || err)));
+  applyAdsMode("Test ON", () => setAdsTestMode(true)).catch(err => status(String(err.stack || err)));
 });
 $("adsTestOffBtn").addEventListener("click", () => {
-  applyAdsMode("Test OFF", () => setAdsTestMode(false), { start: true }).catch(err => status(String(err.stack || err)));
+  applyAdsMode("Test OFF", () => setAdsTestMode(false)).catch(err => status(String(err.stack || err)));
 });
 $("adsRegBtn").addEventListener("click", () => sendAds1299Commands(adsReadConfigAndChannelCommands()).catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {
