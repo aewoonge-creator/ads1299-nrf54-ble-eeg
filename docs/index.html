@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-test-toggle-manual-start">
+  <meta name="app-version" content="2026-09-07-clean-test-controls">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -890,7 +890,6 @@
       </div>
       <div class="presetGrid">
         <button id="adsPresetNormal" class="strong">Normal EEG</button>
-        <button id="adsPresetTest" class="soft">Internal Test</button>
         <button id="adsPresetShort" class="soft">Input Short</button>
         <button id="adsPresetTemp" class="soft">Temperature</button>
         <button id="adsPresetMvdd" class="soft">MVDD Check</button>
@@ -1270,6 +1269,10 @@ function status(msg) {
   state.lastStatus = msg;
   appendLog(msg);
   updateAnalysisLog();
+}
+
+function logOnly(msg) {
+  appendLog(msg);
 }
 
 function setText(id, value) {
@@ -3042,11 +3045,16 @@ function appendStreamLine(line, source) {
   if (!line.trim()) return;
   state.lastPacketAt = performance.now();
   updateConnectionCards();
+  const trimmed = line.trim();
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
-  if (/^(ACK|OK|ERR|REG|RX|PONG|READY|AUTO|STREAM|SPI|BITBANG|GPIO|MISO)\b/i.test(line.trim())) {
+  if (/^(AUTO|GPIO|MISO|SPI|BITBANG|STREAM)\b/i.test(trimmed)) {
+    logOnly(`${source}\n${trimmed}`);
+    return;
+  }
+  if (/^(ACK|OK|ERR|REG|RX|PONG|READY)\b/i.test(trimmed)) {
     updateAdsRegisterValueFromLine(line);
-    status(`${source}\n${line.trim()}`);
+    status(`${source}\n${trimmed}`);
     return;
   }
   if (allNumeric && state.streamHeaders && cells.length !== state.streamHeaders.length) {
@@ -3198,7 +3206,6 @@ $("adsInitBtn").addEventListener("click", () => {
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsLeadStatusBtn").addEventListener("click", () => sendAds1299Commands(["ADS1299 RREG 0x12", "ADS1299 RREG 0x13"]).catch(err => status(String(err.stack || err))));
 $("adsPresetNormal").addEventListener("click", () => applyAdsPreset("Normal EEG", { rate: 250, gain: 24, mux: "NORMAL", ref: "SRB1", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
-$("adsPresetTest").addEventListener("click", () => applyAdsPreset("Internal Test", { rate: 250, gain: 24, mux: "TEST", ref: "SRB1", bias: true, loff: false, test: true }).catch(err => status(String(err.stack || err))));
 $("adsPresetShort").addEventListener("click", () => applyAdsPreset("Input Short", { rate: 250, gain: 24, mux: "SHORTED", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsPresetTemp").addEventListener("click", () => applyAdsPreset("Temperature", { rate: 250, gain: 1, mux: "TEMP", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", { rate: 250, gain: 1, mux: "MVDD", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
