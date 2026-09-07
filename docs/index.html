@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-ti-gui-core-controls">
+  <meta name="app-version" content="2026-09-07-plot-save-actions">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -481,9 +481,16 @@
     .plotHeader {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
       padding: 12px 12px 0;
       min-width: 0;
+    }
+
+    .plotTitleGroup {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
     }
 
     .plotHeader strong {
@@ -495,6 +502,20 @@
       font-size: 12px;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .plotActions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      flex: 0 0 auto;
+    }
+
+    .plotActions button {
+      min-width: 104px;
+      font-weight: 700;
       white-space: nowrap;
     }
 
@@ -786,6 +807,17 @@
       .channelPlotGrid { grid-template-columns: 1fr; }
       .analysisGrid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
       .regionGrid { grid-template-columns: 1fr 1fr; }
+      .plotHeader {
+        align-items: stretch;
+        flex-wrap: wrap;
+      }
+      .plotActions {
+        width: 100%;
+        margin-left: 0;
+      }
+      .plotActions button {
+        flex: 1 1 0;
+      }
     }
   </style>
 </head>
@@ -1012,10 +1044,6 @@
         <div class="statusCard"><strong>P-P amplitude</strong><span id="eegP2p">-</span></div>
         <div class="statusCard"><strong>Min / Max</strong><span id="eegRange">-</span></div>
       </div>
-      <div class="row">
-        <button id="csvDownloadBtn">CSV 저장</button>
-        <button id="csvMetaDownloadBtn">CSV+설정 저장</button>
-      </div>
     </div>
 
     <h2>CSV 설정</h2>
@@ -1115,8 +1143,14 @@
 
       <div class="panel plotPanel">
         <div class="plotHeader">
-          <strong id="plotTitle">Raw EEG</strong>
-          <span id="plotSub">파일을 올리면 CSV 컬럼에서 EEG 채널을 자동 탐지합니다.</span>
+          <div class="plotTitleGroup">
+            <strong id="plotTitle">Raw EEG</strong>
+            <span id="plotSub">파일을 올리면 CSV 컬럼에서 EEG 채널을 자동 탐지합니다.</span>
+          </div>
+          <div class="plotActions" aria-label="CSV 저장">
+            <button id="csvDownloadBtn" class="soft">CSV 저장</button>
+            <button id="csvMetaDownloadBtn" class="primary">CSV+설정 저장</button>
+          </div>
         </div>
         <div class="analysisBox">
           <h2>분석 로그 / 설정 확인</h2>
