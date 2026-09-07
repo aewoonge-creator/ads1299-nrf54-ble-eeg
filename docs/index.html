@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-plot-save-actions">
+  <meta name="app-version" content="2026-09-07-explicit-test-toggle">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -881,6 +881,10 @@
         <button id="adsTestBtn">Test Signal</button>
         <button id="adsRegBtn">Read Regs</button>
       </div>
+      <div class="row">
+        <button id="adsTestOnBtn" class="soft">Test ON</button>
+        <button id="adsTestOffBtn" class="strong">Test OFF</button>
+      </div>
       <div class="sectionHeader">
         <h3>실험 Preset</h3>
       </div>
@@ -1416,6 +1420,12 @@ function setAllAdsChannelsEnabled(enabled) {
   updateAdsChannelPreview();
 }
 
+function setAdsTestMode(enabled) {
+  $("adsMux").value = enabled ? "TEST" : "NORMAL";
+  $("adsTestOn").checked = Boolean(enabled);
+  copyGlobalAdsSettingsToChannels();
+}
+
 function adsChannelTableCommands() {
   updateAdsChannelPreview();
   const commands = adsChannelRows().map((row, idx) => `ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte(chSetValue(row))}`);
@@ -1428,6 +1438,46 @@ function adsChannelTableCommands() {
   commands.push(`ADS1299 WREG 0x17 ${hexByte($("adsLoffOn")?.checked ? 0x02 : 0x00)}`);
   commands.push(`ADS1299 STREAM MASK=${adsChannelMaskHex()}`);
   return commands;
+}
+
+function adsFullConfigCommands() {
+  return [
+    ...adsGlobalConfigCommands(),
+    ...adsChannelTableCommands(),
+    "ADS1299 RREG ALL",
+    "ADS1299 RREG 0x05",
+    "ADS1299 RREG 0x06",
+    "ADS1299 RREG 0x07",
+    "ADS1299 RREG 0x08",
+    "ADS1299 RREG 0x09",
+    "ADS1299 RREG 0x0A",
+    "ADS1299 RREG 0x0B",
+    "ADS1299 RREG 0x0C"
+  ];
+}
+
+function adsReadConfigAndChannelCommands() {
+  return [
+    "ADS1299 RREG ALL",
+    "ADS1299 RREG 0x05",
+    "ADS1299 RREG 0x06",
+    "ADS1299 RREG 0x07",
+    "ADS1299 RREG 0x08",
+    "ADS1299 RREG 0x09",
+    "ADS1299 RREG 0x0A",
+    "ADS1299 RREG 0x0B",
+    "ADS1299 RREG 0x0C"
+  ];
+}
+
+async function applyAdsMode(name, configure) {
+  if (typeof configure === "function") configure();
+  rememberDesiredAdsChannels();
+  state.streamHeaders = null;
+  state.streamRows = [];
+  await sendAds1299Commands(adsFullConfigCommands());
+  syncPlotSelectionToAdsChannels();
+  status(`${name} 적용됨\nCONFIG2가 0xC0이면 Test OFF, 0xD0이면 Test ON입니다.`);
 }
 
 function enabledAdsChannelsFromTable() {
@@ -1504,6 +1554,26 @@ function decodeConfig1(value) {
 function decodeConfig2(value) {
   if (!Number.isFinite(value)) return "Read Regs 대기";
   return `INT_CAL ${bit(value, 4) ? "ON" : "OFF"}, CAL_AMP ${bit(value, 2)}, CAL_FREQ ${value & 0x03}`;
+}
+
+function decodeChannelMux(value) {
+  const muxNames = ["NORMAL", "SHORTED", "BIAS_MEAS", "MVDD", "TEMP", "TEST", "BIAS_DRP", "BIAS_DRN"];
+  if (!Number.isFinite(value)) return "unknown";
+  return muxNames[value & 0x07] || `MUX${value & 0x07}`;
+}
+
+function adsInputModeLabel() {
+  const config2 = adsRegisterValues[0x02];
+  const selected = [...state.selected].filter(ch => /^ch\d+$/i.test(ch));
+  const firstSelected = selected[0] || "ch1";
+  const chIndex = Math.max(0, Math.min(7, Number(firstSelected.replace(/^ch/i, "")) - 1 || 0));
+  const chSet = adsRegisterValues[0x05 + chIndex];
+  const globalTest = Number.isFinite(config2) && Boolean(bit(config2, 4));
+  const chMux = decodeChannelMux(chSet);
+  if (globalTest || chMux === "TEST") return "내부 Test Signal";
+  if (chMux === "NORMAL") return "전극 입력";
+  if (chMux === "SHORTED") return "Input Short";
+  return chMux;
 }
 
 function decodeConfig3(value) {
@@ -2357,7 +2427,7 @@ function drawAxes(ctx, x, y, w, h) {
 
 function drawSignals(ctx, w, h, a, series) {
   $("plotTitle").textContent = state.view === "raw" ? "Raw EEG" : "Filtered EEG";
-  $("plotSub").textContent = `${state.sourceName} · ${a.selected.join(", ")}`;
+  $("plotSub").textContent = `${state.sourceName} · ${adsInputModeLabel()} · ${a.selected.join(", ")}`;
   const pad = { l: 82, r: 20, t: 28, b: 36 };
   const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
   drawAxes(ctx, pad.l, pad.t, pw, ph);
@@ -3133,7 +3203,11 @@ $("bleBtn").addEventListener("click", () => connectBle().catch(err => status(Str
 $("adsPingBtn").addEventListener("click", () => sendAds1299Command("PING").catch(err => status(String(err.stack || err))));
 $("adsSpiLoopbackBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI LOOPBACK").catch(err => status(String(err.stack || err))));
 $("adsSpiProbeBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI PROBE").catch(err => status(String(err.stack || err))));
-$("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
+$("adsInitBtn").addEventListener("click", () => {
+  sendAds1299Command("ADS1299 INIT")
+    .then(() => applyAdsMode("Init 후 Test OFF", () => setAdsTestMode(false)))
+    .catch(err => status(String(err.stack || err)));
+});
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
 $("adsLeadStatusBtn").addEventListener("click", () => sendAds1299Commands(["ADS1299 RREG 0x12", "ADS1299 RREG 0x13"]).catch(err => status(String(err.stack || err))));
 $("adsPresetNormal").addEventListener("click", () => applyAdsPreset("Normal EEG", { rate: 250, gain: 24, mux: "NORMAL", ref: "SRB1", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
@@ -3155,7 +3229,13 @@ $("adsTestBtn").addEventListener("click", () => {
   rememberDesiredAdsChannels();
   sendAds1299Command(adsTestCommand()).catch(err => status(String(err.stack || err)));
 });
-$("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
+$("adsTestOnBtn").addEventListener("click", () => {
+  applyAdsMode("Test ON", () => setAdsTestMode(true)).catch(err => status(String(err.stack || err)));
+});
+$("adsTestOffBtn").addEventListener("click", () => {
+  applyAdsMode("Test OFF", () => setAdsTestMode(false)).catch(err => status(String(err.stack || err)));
+});
+$("adsRegBtn").addEventListener("click", () => sendAds1299Commands(adsReadConfigAndChannelCommands()).catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {
   rememberDesiredAdsChannels();
   sendAds1299Commands(adsGlobalConfigCommands()).catch(err => status(String(err.stack || err)));
