@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-08-27-stream-header-resync">
+  <meta name="app-version" content="2026-09-07-ti-gui-core-controls">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -124,6 +124,19 @@
       border-color: var(--accent2);
     }
 
+    button.soft {
+      background: #eef4f7;
+      border-color: #cdd7e3;
+      font-weight: 700;
+    }
+
+    button.strong {
+      color: #fff;
+      background: #172033;
+      border-color: #172033;
+      font-weight: 750;
+    }
+
     button:disabled {
       opacity: .55;
       cursor: not-allowed;
@@ -139,6 +152,38 @@
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
       gap: 8px;
+    }
+
+    .presetGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      margin: 9px 0;
+    }
+
+    .presetGrid button {
+      min-height: 42px;
+      text-align: left;
+      font-weight: 750;
+    }
+
+    .sectionHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .sectionHeader h3 {
+      margin: 0;
+      font-size: 13px;
+    }
+
+    .sectionHeader button {
+      min-height: 30px;
+      padding: 5px 8px;
+      font-size: 12px;
     }
 
     .checks {
@@ -250,6 +295,60 @@
       font-family: Consolas, monospace;
       font-size: 11px;
       margin-bottom: 6px;
+    }
+
+    .decodeGrid,
+    .leadGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .decodeTile,
+    .leadChip {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 7px 8px;
+      min-width: 0;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .decodeTile strong,
+    .leadChip strong {
+      display: block;
+      font-size: 11px;
+      color: var(--ink);
+      margin-bottom: 3px;
+    }
+
+    .decodeTile span,
+    .leadChip span {
+      color: var(--muted);
+    }
+
+    .leadChip.ok {
+      border-color: #abefc6;
+      background: #f6fef9;
+    }
+
+    .leadChip.warn {
+      border-color: #fda29b;
+      background: #fffbfa;
+    }
+
+    .rangeLine {
+      display: grid;
+      grid-template-columns: 1fr 64px;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    input[type="range"] {
+      width: 100%;
     }
 
     .adsTableWrap,
@@ -750,11 +849,36 @@
         <button id="adsTestBtn">Test Signal</button>
         <button id="adsRegBtn">Read Regs</button>
       </div>
+      <div class="sectionHeader">
+        <h3>실험 Preset</h3>
+      </div>
+      <div class="presetGrid">
+        <button id="adsPresetNormal" class="strong">Normal EEG</button>
+        <button id="adsPresetTest" class="soft">Internal Test</button>
+        <button id="adsPresetShort" class="soft">Input Short</button>
+        <button id="adsPresetTemp" class="soft">Temperature</button>
+        <button id="adsPresetMvdd" class="soft">MVDD Check</button>
+        <button id="adsPresetBias" class="soft">BIAS Measure</button>
+      </div>
       <div class="inlineLog">
         <div id="adsRegSummary" class="status compactStatus">CONFIG1/2/3은 Read Regs를 누르면 여기에 표시됩니다.</div>
         <div id="status" class="status">CSV 파일을 올리거나 USB/BLE를 연결하세요.</div>
         <div id="eventLog" class="logBox"></div>
       </div>
+      <div class="sectionHeader">
+        <h3>Register 해석</h3>
+      </div>
+      <div class="decodeGrid">
+        <div class="decodeTile"><strong>CONFIG1</strong><span id="adsDecodedConfig1">Read Regs 대기</span></div>
+        <div class="decodeTile"><strong>CONFIG2</strong><span id="adsDecodedConfig2">Read Regs 대기</span></div>
+        <div class="decodeTile"><strong>CONFIG3</strong><span id="adsDecodedConfig3">Read Regs 대기</span></div>
+        <div class="decodeTile"><strong>LOFF</strong><span id="adsDecodedLoff">Lead-off 미확인</span></div>
+      </div>
+      <div class="sectionHeader">
+        <h3>Lead-off 상태</h3>
+        <button id="adsLeadStatusBtn">상태 읽기</button>
+      </div>
+      <div id="adsLeadStatusGrid" class="leadGrid"></div>
     <div class="triple">
       <div>
         <label for="adsRate">SPS</label>
@@ -826,8 +950,12 @@
             <th>Power down</th>
             <th>Gain</th>
             <th>MUX</th>
+            <th>SRB2</th>
             <th>BIAS +</th>
             <th>BIAS -</th>
+            <th>LOFF P</th>
+            <th>LOFF N</th>
+            <th>Flip</th>
             <th>CHnSET</th>
           </tr>
         </thead>
@@ -884,7 +1012,10 @@
         <div class="statusCard"><strong>P-P amplitude</strong><span id="eegP2p">-</span></div>
         <div class="statusCard"><strong>Min / Max</strong><span id="eegRange">-</span></div>
       </div>
-      <button id="csvDownloadBtn">CSV 저장</button>
+      <div class="row">
+        <button id="csvDownloadBtn">CSV 저장</button>
+        <button id="csvMetaDownloadBtn">CSV+설정 저장</button>
+      </div>
     </div>
 
     <h2>CSV 설정</h2>
@@ -929,6 +1060,26 @@
       <label class="check"><input id="lpOn" type="checkbox" checked>Low-pass</label>
       <label class="check"><input id="notchOn" type="checkbox" checked>Notch</label>
       <label class="check"><input id="detrendOn" type="checkbox" checked>DC 제거</label>
+    </div>
+
+    <h2>Plot 보기</h2>
+    <div class="row">
+      <div>
+        <label for="plotScaleMode">Scale</label>
+        <select id="plotScaleMode">
+          <option value="auto">Auto</option>
+          <option value="fixed">Fixed</option>
+        </select>
+      </div>
+      <div>
+        <label for="plotFixedScale">Fixed raw</label>
+        <input id="plotFixedScale" type="number" min="1" step="100" value="50000">
+      </div>
+    </div>
+    <label for="plotChannelSpacing">채널 간격</label>
+    <div class="rangeLine">
+      <input id="plotChannelSpacing" type="range" min="0.15" max="0.46" step="0.01" value="0.32">
+      <span id="plotChannelSpacingLabel">0.32</span>
     </div>
 
     <h2>분석</h2>
@@ -1067,6 +1218,8 @@ const adsRegisters = [
 const adsRegisterValues = {};
 const adsGainBits = { "1": 0b000, "2": 0b001, "4": 0b010, "6": 0b011, "8": 0b100, "12": 0b101, "24": 0b110 };
 const adsMuxBits = { NORMAL: 0b000, SHORTED: 0b001, BIAS_MEAS: 0b010, MVDD: 0b011, TEMP: 0b100, TEST: 0b101, BIAS_DRP: 0b110, BIAS_DRN: 0b111 };
+const adsRateBits = { 16000: 0b000, 8000: 0b001, 4000: 0b010, 2000: 0b011, 1000: 0b100, 500: 0b101, 250: 0b110 };
+const adsRateByBits = { 0: 16000, 1: 8000, 2: 4000, 3: 2000, 4: 1000, 5: 500, 6: 250 };
 
 const bands = {
   Delta: [1, 4],
@@ -1101,11 +1254,40 @@ function selectHtml(options, selected) {
   return options.map(v => `<option value="${v}"${String(v) === String(selected) ? " selected" : ""}>${v}</option>`).join("");
 }
 
+function bit(value, index) {
+  return (value >> index) & 1;
+}
+
+function maskFromSelector(selector) {
+  return adsChannelRows().reduce((mask, row, idx) => row.querySelector(selector).checked ? mask | (1 << idx) : mask, 0);
+}
+
+function referenceRegisterValue() {
+  return $("adsRef")?.value === "SRB1" ? 0x20 : 0x00;
+}
+
+function config1PreviewValue() {
+  const rate = Number($("adsRate")?.value) || 250;
+  return 0x90 | (adsRateBits[rate] ?? 0b110);
+}
+
+function config2PreviewValue() {
+  return $("adsTestOn")?.checked ? 0xD0 : 0xC0;
+}
+
+function config3PreviewValue() {
+  return $("adsBiasOn")?.checked ? 0xEC : 0xE0;
+}
+
+function loffPreviewValue() {
+  return $("adsLoffOn")?.checked ? 0x03 : 0x00;
+}
+
 function renderAdsChannelConfig() {
   const body = $("adsChannelConfig");
   if (!body) return;
   const gains = ["24", "12", "8", "6", "4", "2", "1"];
-  const muxes = ["NORMAL", "SHORTED", "TEST", "BIAS_MEAS", "MVDD", "TEMP"];
+  const muxes = ["NORMAL", "SHORTED", "TEST", "BIAS_MEAS", "MVDD", "TEMP", "BIAS_DRP", "BIAS_DRN"];
   body.innerHTML = Array.from({ length: 8 }, (_, i) => {
     const ch = i + 1;
     return `
@@ -1115,8 +1297,12 @@ function renderAdsChannelConfig() {
         <td><input class="ads-ch-pd" type="checkbox" aria-label="CH${ch} power down"></td>
         <td><select class="ads-ch-gain" aria-label="CH${ch} gain">${selectHtml(gains, "24")}</select></td>
         <td><select class="ads-ch-mux" aria-label="CH${ch} mux">${selectHtml(muxes, "NORMAL")}</select></td>
+        <td><input class="ads-ch-srb2" type="checkbox" aria-label="CH${ch} SRB2"></td>
         <td><input class="ads-ch-biasp" type="checkbox" checked aria-label="CH${ch} BIAS positive"></td>
         <td><input class="ads-ch-biasn" type="checkbox" checked aria-label="CH${ch} BIAS negative"></td>
+        <td><input class="ads-ch-loffp" type="checkbox" aria-label="CH${ch} lead-off positive"></td>
+        <td><input class="ads-ch-loffn" type="checkbox" aria-label="CH${ch} lead-off negative"></td>
+        <td><input class="ads-ch-loffflip" type="checkbox" aria-label="CH${ch} lead-off current flip"></td>
         <td class="regValue ads-ch-value">0x60</td>
       </tr>
     `;
@@ -1134,7 +1320,8 @@ function chSetValue(row) {
   const powerDown = row.querySelector(".ads-ch-pd").checked || !enabled;
   const gain = row.querySelector(".ads-ch-gain").value;
   const mux = row.querySelector(".ads-ch-mux").value;
-  return (powerDown ? 0x80 : 0) | ((adsGainBits[gain] ?? 0b110) << 4) | (adsMuxBits[mux] ?? 0);
+  const srb2 = row.querySelector(".ads-ch-srb2")?.checked ? 0x08 : 0;
+  return (powerDown ? 0x80 : 0) | ((adsGainBits[gain] ?? 0b110) << 4) | srb2 | (adsMuxBits[mux] ?? 0);
 }
 
 function updateAdsChannelPreview() {
@@ -1148,13 +1335,22 @@ function updateRegisterPreviewFromChannelTable() {
   adsChannelRows().forEach((row, idx) => {
     adsRegisterValues[0x05 + idx] = chSetValue(row);
   });
-  adsRegisterValues[0x0D] = biasMask(".ads-ch-biasp");
-  adsRegisterValues[0x0E] = biasMask(".ads-ch-biasn");
+  adsRegisterValues[0x01] = config1PreviewValue();
+  adsRegisterValues[0x02] = config2PreviewValue();
+  adsRegisterValues[0x03] = config3PreviewValue();
+  adsRegisterValues[0x04] = loffPreviewValue();
+  adsRegisterValues[0x0D] = maskFromSelector(".ads-ch-biasp");
+  adsRegisterValues[0x0E] = maskFromSelector(".ads-ch-biasn");
+  adsRegisterValues[0x0F] = maskFromSelector(".ads-ch-loffp");
+  adsRegisterValues[0x10] = maskFromSelector(".ads-ch-loffn");
+  adsRegisterValues[0x11] = maskFromSelector(".ads-ch-loffflip");
+  adsRegisterValues[0x15] = referenceRegisterValue();
+  adsRegisterValues[0x17] = $("adsLoffOn")?.checked ? 0x02 : 0x00;
   renderAdsRegisterMap();
 }
 
 function biasMask(selector) {
-  return adsChannelRows().reduce((mask, row, idx) => row.querySelector(selector).checked ? mask | (1 << idx) : mask, 0);
+  return maskFromSelector(selector);
 }
 
 function copyGlobalAdsSettingsToChannels() {
@@ -1167,8 +1363,12 @@ function copyGlobalAdsSettingsToChannels() {
     row.querySelector(".ads-ch-pd").checked = !enabledSet.has(ch);
     row.querySelector(".ads-ch-gain").value = gain;
     row.querySelector(".ads-ch-mux").value = adsMuxBits[mux] === undefined ? "NORMAL" : mux;
+    row.querySelector(".ads-ch-srb2").checked = $("adsRef").value === "SRB2";
     row.querySelector(".ads-ch-biasp").checked = $("adsBiasOn").checked;
     row.querySelector(".ads-ch-biasn").checked = $("adsBiasOn").checked;
+    row.querySelector(".ads-ch-loffp").checked = $("adsLoffOn").checked;
+    row.querySelector(".ads-ch-loffn").checked = $("adsLoffOn").checked;
+    row.querySelector(".ads-ch-loffflip").checked = false;
   });
   updateAdsChannelPreview();
 }
@@ -1185,8 +1385,13 @@ function setAllAdsChannelsEnabled(enabled) {
 function adsChannelTableCommands() {
   updateAdsChannelPreview();
   const commands = adsChannelRows().map((row, idx) => `ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte(chSetValue(row))}`);
-  commands.push(`ADS1299 WREG 0x0D ${hexByte(biasMask(".ads-ch-biasp"))}`);
-  commands.push(`ADS1299 WREG 0x0E ${hexByte(biasMask(".ads-ch-biasn"))}`);
+  commands.push(`ADS1299 WREG 0x0D ${hexByte(maskFromSelector(".ads-ch-biasp"))}`);
+  commands.push(`ADS1299 WREG 0x0E ${hexByte(maskFromSelector(".ads-ch-biasn"))}`);
+  commands.push(`ADS1299 WREG 0x0F ${hexByte(maskFromSelector(".ads-ch-loffp"))}`);
+  commands.push(`ADS1299 WREG 0x10 ${hexByte(maskFromSelector(".ads-ch-loffn"))}`);
+  commands.push(`ADS1299 WREG 0x11 ${hexByte(maskFromSelector(".ads-ch-loffflip"))}`);
+  commands.push(`ADS1299 WREG 0x15 ${hexByte(referenceRegisterValue())}`);
+  commands.push(`ADS1299 WREG 0x17 ${hexByte($("adsLoffOn")?.checked ? 0x02 : 0x00)}`);
   commands.push(`ADS1299 STREAM MASK=${adsChannelMaskHex()}`);
   return commands;
 }
@@ -1251,6 +1456,54 @@ function renderAdsRegisterMap() {
       </tr>
     `;
   }).join("");
+  renderAdsDecoded();
+  renderLeadOffStatus();
+}
+
+function decodeConfig1(value) {
+  if (!Number.isFinite(value)) return "Read Regs 대기";
+  const dr = value & 0x07;
+  const sps = adsRateByBits[dr] || `DR ${dr}`;
+  return `SPS ${sps}, CLK_EN ${bit(value, 5) ? "ON" : "OFF"}, DAISY_EN ${bit(value, 6)}`;
+}
+
+function decodeConfig2(value) {
+  if (!Number.isFinite(value)) return "Read Regs 대기";
+  return `INT_CAL ${bit(value, 4) ? "ON" : "OFF"}, CAL_AMP ${bit(value, 2)}, CAL_FREQ ${value & 0x03}`;
+}
+
+function decodeConfig3(value) {
+  if (!Number.isFinite(value)) return "Read Regs 대기";
+  return `REFBUF ${bit(value, 7) ? "ON" : "OFF"}, BIAS ${bit(value, 2) ? "ON" : "OFF"}, BIASREF ${bit(value, 3) ? "internal" : "external"}`;
+}
+
+function decodeLoff(value) {
+  if (!Number.isFinite(value)) return "Lead-off 미확인";
+  return `TH ${(value >> 5) & 0x07}, I ${(value >> 2) & 0x03}, F ${value & 0x03}`;
+}
+
+function renderAdsDecoded() {
+  setText("adsDecodedConfig1", decodeConfig1(adsRegisterValues[0x01]));
+  setText("adsDecodedConfig2", decodeConfig2(adsRegisterValues[0x02]));
+  setText("adsDecodedConfig3", decodeConfig3(adsRegisterValues[0x03]));
+  setText("adsDecodedLoff", decodeLoff(adsRegisterValues[0x04]));
+}
+
+function renderLeadOffStatus() {
+  const el = $("adsLeadStatusGrid");
+  if (!el) return;
+  const p = adsRegisterValues[0x12];
+  const n = adsRegisterValues[0x13];
+  el.innerHTML = Array.from({ length: 8 }, (_, i) => {
+    const pKnown = Number.isFinite(p);
+    const nKnown = Number.isFinite(n);
+    const pOff = pKnown && Boolean(p & (1 << i));
+    const nOff = nKnown && Boolean(n & (1 << i));
+    const known = pKnown || nKnown;
+    const warn = pOff || nOff;
+    const label = known ? `P ${pKnown ? (pOff ? "OFF" : "OK") : "-"} / N ${nKnown ? (nOff ? "OFF" : "OK") : "-"}` : "미확인";
+    return `<div class="leadChip ${known ? (warn ? "warn" : "ok") : ""}"><strong>CH${i + 1}</strong><span>${label}</span></div>`;
+  }).join("");
 }
 
 function rememberManualRegisterWrite(addrText, valueText) {
@@ -1265,6 +1518,16 @@ function rememberManualRegisterWrite(addrText, valueText) {
 function updateAdsRegisterValueFromLine(line) {
   const text = String(line).trim();
   if (!/^REG\b/i.test(text)) return;
+  const idLine = /^REG\s+ID\s+(?:0x)?([0-9a-f]{1,2})/i.exec(text);
+  if (idLine) {
+    adsRegisterValues[0x00] = Number.parseInt(idLine[1], 16);
+  }
+  const single = /^REG\s+(?:0x)?([0-9a-f]{1,2})\s+(?:0x)?([0-9a-f]{1,2})/i.exec(text);
+  if (single) {
+    const addr = Number.parseInt(single[1], 16);
+    const value = Number.parseInt(single[2], 16);
+    if (Number.isFinite(addr) && Number.isFinite(value)) adsRegisterValues[addr] = value;
+  }
   const pairs = [...text.matchAll(/(?:0x)?([0-9a-f]{1,2})\s*[:= ]\s*(?:0x)?([0-9a-f]{1,2})/gi)];
   pairs.forEach(match => {
     const addr = Number.parseInt(match[1], 16);
@@ -2066,6 +2329,9 @@ function drawSignals(ctx, w, h, a, series) {
   drawAxes(ctx, pad.l, pad.t, pw, ph);
   const lanes = a.selected.length;
   const colors = ["#2563eb", "#0f766e", "#b42318", "#7c3aed", "#ea580c", "#0891b2", "#4d7c0f", "#be185d"];
+  const fixedScale = Math.max(1, Number($("plotFixedScale")?.value) || 1);
+  const fixedMode = $("plotScaleMode")?.value === "fixed";
+  const laneGain = Math.max(0.15, Math.min(0.46, Number($("plotChannelSpacing")?.value) || 0.32));
   a.selected.forEach((ch, idx) => {
     const xs = series[ch] || [];
     if (xs.length < 2) return;
@@ -2074,7 +2340,7 @@ function drawSignals(ctx, w, h, a, series) {
     const finite = xs.filter(Number.isFinite);
     const mean = finite.reduce((sum, v) => sum + v, 0) / Math.max(1, finite.length);
     const centered = xs.map(v => Number.isFinite(v) ? v - mean : 0);
-    const maxAbs = Math.max(...centered.map(v => Math.abs(v))) || 1;
+    const maxAbs = fixedMode ? fixedScale : (Math.max(...centered.map(v => Math.abs(v))) || 1);
     ctx.strokeStyle = "#eef2f6";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -2086,7 +2352,7 @@ function drawSignals(ctx, w, h, a, series) {
     ctx.beginPath();
     centered.forEach((v, i) => {
       const x = pad.l + i / Math.max(1, centered.length - 1) * pw;
-      const y = base - (v / maxAbs) * laneH * 0.32;
+      const y = base - (v / maxAbs) * laneH * laneGain;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
@@ -2626,6 +2892,43 @@ function adsChannelsCommand() {
   return `ADS1299 CHANNELS MASK=${$("adsApplyChannelsOn").checked ? adsChannelMaskHex() : "0x00"}`;
 }
 
+function adsGlobalConfigCommands() {
+  updateAdsChannelPreview();
+  return [
+    adsConfigCommand(),
+    `ADS1299 WREG 0x15 ${hexByte(referenceRegisterValue())}`,
+    `ADS1299 WREG 0x17 ${hexByte($("adsLoffOn")?.checked ? 0x02 : 0x00)}`
+  ];
+}
+
+function setAdsControlsFromPreset(preset) {
+  $("adsRate").value = String(preset.rate ?? 250);
+  $("adsGain").value = String(preset.gain ?? 24);
+  $("adsMux").value = preset.mux || "NORMAL";
+  $("adsRef").value = preset.ref || "SRB1";
+  $("adsChannels").value = preset.channels || "1,2,3,4,5,6,7,8";
+  $("adsBiasOn").checked = preset.bias !== false;
+  $("adsLoffOn").checked = Boolean(preset.loff);
+  $("adsTestOn").checked = Boolean(preset.test);
+  $("adsApplyChannelsOn").checked = true;
+  copyGlobalAdsSettingsToChannels();
+}
+
+function adsPresetCommands(preset) {
+  setAdsControlsFromPreset(preset);
+  const commands = [adsConfigCommand()];
+  commands.push(...adsChannelTableCommands());
+  return commands;
+}
+
+async function applyAdsPreset(name, preset) {
+  rememberDesiredAdsChannels();
+  const commands = adsPresetCommands(preset);
+  rememberDesiredAdsChannels();
+  await sendAds1299Commands(commands);
+  status(`${name} preset 적용됨\nStart를 누르면 현재 설정으로 stream을 시작합니다.`);
+}
+
 async function readTextStream(reader, source) {
   let buffer = "";
   while (true) {
@@ -2702,6 +3005,46 @@ function downloadStreamCsv() {
   status(`CSV 저장됨: ${link.download}`);
 }
 
+function adsMetadataLines() {
+  const regs = adsRegisters
+    .map(reg => `${reg.name}=${Number.isFinite(adsRegisterValues[reg.addr]) ? hexByte(adsRegisterValues[reg.addr]) : "--"}`)
+    .join(" ");
+  return [
+    `# source=${state.sourceName || "BLE ADS1299"}`,
+    `# saved_at=${new Date().toISOString()}`,
+    `# ads_rate_sps=${$("adsRate")?.value || ""}`,
+    `# ads_gain=${$("adsGain")?.value || ""}`,
+    `# ads_mux=${$("adsMux")?.value || ""}`,
+    `# ads_reference=${$("adsRef")?.value || ""}`,
+    `# ads_channel_mask=${adsChannelMaskHex()}`,
+    `# ads_bias=${$("adsBiasOn")?.checked ? "ON" : "OFF"}`,
+    `# ads_lead_off=${$("adsLoffOn")?.checked ? "ON" : "OFF"}`,
+    `# ads_test=${$("adsTestOn")?.checked ? "ON" : "OFF"}`,
+    `# registers ${regs}`
+  ];
+}
+
+function downloadStreamCsvWithMeta() {
+  if (!state.streamHeaders || !state.streamRows.length) {
+    status("저장할 stream 데이터가 아직 없습니다.");
+    return;
+  }
+  const headers = state.streamHeaders;
+  const lines = [...adsMetadataLines(), headers.join(",")];
+  state.streamRows.forEach(row => {
+    lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  link.href = url;
+  link.download = `ads1299_stream_with_config_${stamp}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  status(`CSV+설정 저장됨: ${link.download}`);
+}
+
 function exportSummary() {
   const a = state.lastAnalysis;
   if (!a) return;
@@ -2758,6 +3101,13 @@ $("adsSpiLoopbackBtn").addEventListener("click", () => sendAds1299Command("ADS12
 $("adsSpiProbeBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI PROBE").catch(err => status(String(err.stack || err))));
 $("adsInitBtn").addEventListener("click", () => sendAds1299Command("ADS1299 INIT").catch(err => status(String(err.stack || err))));
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
+$("adsLeadStatusBtn").addEventListener("click", () => sendAds1299Commands(["ADS1299 RREG 0x12", "ADS1299 RREG 0x13"]).catch(err => status(String(err.stack || err))));
+$("adsPresetNormal").addEventListener("click", () => applyAdsPreset("Normal EEG", { rate: 250, gain: 24, mux: "NORMAL", ref: "SRB1", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
+$("adsPresetTest").addEventListener("click", () => applyAdsPreset("Internal Test", { rate: 250, gain: 24, mux: "TEST", ref: "SRB1", bias: true, loff: false, test: true }).catch(err => status(String(err.stack || err))));
+$("adsPresetShort").addEventListener("click", () => applyAdsPreset("Input Short", { rate: 250, gain: 24, mux: "SHORTED", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
+$("adsPresetTemp").addEventListener("click", () => applyAdsPreset("Temperature", { rate: 250, gain: 1, mux: "TEMP", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
+$("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", { rate: 250, gain: 1, mux: "MVDD", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
+$("adsPresetBias").addEventListener("click", () => applyAdsPreset("BIAS Measure", { rate: 250, gain: 24, mux: "BIAS_MEAS", ref: "DIFFERENTIAL", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => {
   state.streamHeaders = null;
   state.streamRows = [];
@@ -2774,7 +3124,7 @@ $("adsTestBtn").addEventListener("click", () => {
 $("adsRegBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ALL").catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {
   rememberDesiredAdsChannels();
-  sendAds1299Command(adsConfigCommand()).catch(err => status(String(err.stack || err)));
+  sendAds1299Commands(adsGlobalConfigCommands()).catch(err => status(String(err.stack || err)));
 });
 $("adsApplyChannelsBtn").addEventListener("click", () => {
   rememberDesiredAdsChannels();
@@ -2799,6 +3149,7 @@ $("adsWriteRegBtn").addEventListener("click", () => {
 });
 $("adsSendBtn").addEventListener("click", () => sendAds1299Command($("adsCommand").value).catch(err => status(String(err.stack || err))));
 $("csvDownloadBtn").addEventListener("click", downloadStreamCsv);
+$("csvMetaDownloadBtn").addEventListener("click", downloadStreamCsvWithMeta);
 
 document.querySelectorAll(".tab").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -2810,12 +3161,19 @@ document.querySelectorAll(".tab").forEach(btn => {
   });
 });
 
-["timeColumn","fsInput","startSec","durationSec","hpInput","lpInput","notchInput","maxFreqInput","showIndividualSpectra","normalizeSpectra","hpOn","lpOn","notchOn","detrendOn"].forEach(id => {
-  $(id).addEventListener("change", analyze);
+["timeColumn","fsInput","startSec","durationSec","hpInput","lpInput","notchInput","maxFreqInput","showIndividualSpectra","normalizeSpectra","hpOn","lpOn","notchOn","detrendOn","plotScaleMode","plotFixedScale"].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener("change", analyze);
 });
 
-["adsGain","adsMux","adsChannels","adsBiasOn"].forEach(id => {
-  $(id).addEventListener("change", updateAdsChannelPreview);
+["adsRate","adsGain","adsMux","adsChannels","adsRef","adsBiasOn","adsLoffOn","adsTestOn"].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener("change", updateAdsChannelPreview);
+});
+
+$("plotChannelSpacing")?.addEventListener("input", e => {
+  setText("plotChannelSpacingLabel", Number(e.target.value).toFixed(2));
+  draw();
 });
 
 $("selectAll").addEventListener("click", () => {
