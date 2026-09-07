@@ -289,7 +289,7 @@ int ads1299_init_device(void)
 		.gain = 24,
 		.bias_enabled = true,
 		.lead_off_enabled = false,
-		.test_signal_enabled = true,
+		.test_signal_enabled = false,
 		.enabled_channel_mask = 0xFF,
 	};
 

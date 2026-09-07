@@ -37,7 +37,7 @@ static uint32_t ads_sample_rate_sps = 250;
 static uint32_t ads_gain = 24;
 static bool ads_bias_enabled = true;
 static bool ads_lead_off_enabled;
-static bool ads_test_signal_enabled = true;
+static bool ads_test_signal_enabled;
 static uint8_t ads_enabled_channel_mask = 0xFF;
 
 static void command_work_handler(struct k_work *work);
@@ -307,7 +307,7 @@ static void handle_ads1299_command(const char *command)
 			ads_gain = 24;
 			ads_bias_enabled = true;
 			ads_lead_off_enabled = false;
-			ads_test_signal_enabled = true;
+			ads_test_signal_enabled = false;
 			ads_enabled_channel_mask = 0xFF;
 			ble_send_line("OK INIT\n");
 			send_stream_header();

@@ -1233,6 +1233,7 @@ const state = {
   lastAnalysis: null,
   streamHeaders: null,
   streamRows: [],
+  lastStreamPlotAt: 0,
   recording: false,
   recordHeaders: null,
   recordRows: [],
@@ -1550,6 +1551,7 @@ function syncPlotSelectionToAdsChannels() {
 function resetLiveStream(reason = "") {
   state.streamHeaders = null;
   state.streamRows = [];
+  state.lastStreamPlotAt = 0;
   resetRecording();
   state.rows = [];
   state.headers = [];
@@ -3145,7 +3147,8 @@ function appendStreamText(text, source) {
 
 function appendStreamLine(line, source) {
   if (!line.trim()) return;
-  state.lastPacketAt = performance.now();
+  const now = performance.now();
+  state.lastPacketAt = now;
   updateConnectionCards();
   const trimmed = line.trim();
   const cells = line.split(",").map(s => s.trim());
@@ -3185,7 +3188,8 @@ function appendStreamLine(line, source) {
   if (state.streamRows.length > 30000) state.streamRows.splice(0, state.streamRows.length - 30000);
   updateConnectionCards();
   updateEegStatus();
-  if (state.streamRows.length % 25 === 0) {
+  if (now - state.lastStreamPlotAt >= 125) {
+    state.lastStreamPlotAt = now;
     loadDataset(state.streamHeaders, state.streamRows.slice(), source, { silent: true });
   }
 }
@@ -3360,14 +3364,23 @@ $("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", 
 $("adsPresetBias").addEventListener("click", () => applyAdsPreset("BIAS Measure", { rate: 250, gain: 24, mux: "BIAS_MEAS", ref: "DIFFERENTIAL", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => {
   resetLiveStream("Start 중: 새 stream plot을 준비합니다.");
+  setAdsTestMode(false);
   rememberDesiredAdsChannels();
-  sendAds1299Command("ADS1299 START")
+  sendAds1299Commands([...adsFullConfigCommands(), "ADS1299 START"])
     .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`))
     .catch(err => status(String(err.stack || err)));
 });
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
 $("adsTestOnBtn").addEventListener("click", () => {
-  applyAdsMode("Test ON", () => setAdsTestMode(true)).catch(err => status(String(err.stack || err)));
+  resetLiveStream("Test ON 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.");
+  setAdsTestMode(true);
+  rememberDesiredAdsChannels();
+  sendAds1299Commands([...adsFullConfigCommands(), "ADS1299 START"])
+    .then(() => {
+      syncPlotSelectionToAdsChannels();
+      status(`Test ON 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`);
+    })
+    .catch(err => status(String(err.stack || err)));
 });
 $("adsTestOffBtn").addEventListener("click", () => {
   applyAdsMode("Test OFF", () => setAdsTestMode(false)).catch(err => status(String(err.stack || err)));
