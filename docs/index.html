@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-clean-test-controls">
+  <meta name="app-version" content="2026-09-07-recording-window">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -517,6 +517,12 @@
       min-width: 104px;
       font-weight: 700;
       white-space: nowrap;
+    }
+
+    .plotActions button.recording {
+      color: #fff;
+      background: #b42318;
+      border-color: #b42318;
     }
 
     .analysisBox {
@@ -1148,8 +1154,9 @@
             <span id="plotSub">파일을 올리면 CSV 컬럼에서 EEG 채널을 자동 탐지합니다.</span>
           </div>
           <div class="plotActions" aria-label="CSV 저장">
-            <button id="csvDownloadBtn" class="soft">CSV 저장</button>
-            <button id="csvMetaDownloadBtn" class="primary">CSV+설정 저장</button>
+            <button id="recordStartBtn" class="soft">저장 시작</button>
+            <button id="recordStopBtn" class="primary" disabled>저장 멈춤</button>
+            <button id="csvMetaDownloadBtn">최근 CSV+설정</button>
           </div>
         </div>
         <div class="analysisBox">
@@ -1205,6 +1212,11 @@ const state = {
   lastAnalysis: null,
   streamHeaders: null,
   streamRows: [],
+  recording: false,
+  recordHeaders: null,
+  recordRows: [],
+  recordStartedAt: null,
+  recordStoppedAt: null,
   demoLoaded: false,
   labelRows: [],
   labelHeaders: [],
@@ -1517,6 +1529,7 @@ function syncPlotSelectionToAdsChannels() {
 function resetLiveStream(reason = "") {
   state.streamHeaders = null;
   state.streamRows = [];
+  resetRecording();
   state.rows = [];
   state.headers = [];
   state.channels = [];
@@ -1527,6 +1540,29 @@ function resetLiveStream(reason = "") {
   renderChannels();
   draw();
   if (reason) status(reason);
+}
+
+function resetRecording() {
+  state.recording = false;
+  state.recordHeaders = null;
+  state.recordRows = [];
+  state.recordStartedAt = null;
+  state.recordStoppedAt = null;
+  updateRecordingButtons();
+}
+
+function updateRecordingButtons() {
+  const start = $("recordStartBtn");
+  const stop = $("recordStopBtn");
+  if (start) {
+    start.disabled = state.recording;
+    start.classList.toggle("recording", state.recording);
+    start.textContent = state.recording ? `저장 중 ${state.recordRows.length}` : "저장 시작";
+  }
+  if (stop) {
+    stop.disabled = !state.recording;
+    stop.textContent = "저장 멈춤";
+  }
 }
 
 function renderAdsRegisterMap() {
@@ -3060,6 +3096,7 @@ function appendStreamLine(line, source) {
   if (allNumeric && state.streamHeaders && cells.length !== state.streamHeaders.length) {
     state.streamHeaders = null;
     state.streamRows = [];
+    resetRecording();
   }
   if (!state.streamHeaders && allNumeric) {
     state.streamHeaders = ["t_ms", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
@@ -3074,6 +3111,11 @@ function appendStreamLine(line, source) {
   const obj = {};
   state.streamHeaders.forEach((h, i) => obj[h] = Number.parseFloat(cells[i]));
   state.streamRows.push(obj);
+  if (state.recording) {
+    if (!state.recordHeaders) state.recordHeaders = state.streamHeaders.slice();
+    state.recordRows.push({ ...obj });
+    if (state.recordRows.length % 25 === 0) updateRecordingButtons();
+  }
   if (state.streamRows.length > 30000) state.streamRows.splice(0, state.streamRows.length - 30000);
   updateConnectionCards();
   updateEegStatus();
@@ -3082,14 +3124,13 @@ function appendStreamLine(line, source) {
   }
 }
 
-function downloadStreamCsv() {
-  if (!state.streamHeaders || !state.streamRows.length) {
+function downloadRowsCsv({ headers, rows, withMeta, prefix }) {
+  if (!headers || !rows.length) {
     status("저장할 stream 데이터가 아직 없습니다.");
     return;
   }
-  const headers = state.streamHeaders;
-  const lines = [headers.join(",")];
-  state.streamRows.forEach(row => {
+  const lines = withMeta ? [...adsMetadataLines(), headers.join(",")] : [headers.join(",")];
+  rows.forEach(row => {
     lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
   });
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -3097,10 +3138,10 @@ function downloadStreamCsv() {
   const link = document.createElement("a");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   link.href = url;
-  link.download = `ads1299_stream_${stamp}.csv`;
+  link.download = `${prefix}_${stamp}.csv`;
   link.click();
   URL.revokeObjectURL(url);
-  status(`CSV 저장됨: ${link.download}`);
+  status(`CSV 저장됨: ${link.download}\n샘플 ${rows.length}개`);
 }
 
 function adsMetadataLines() {
@@ -3123,24 +3164,42 @@ function adsMetadataLines() {
 }
 
 function downloadStreamCsvWithMeta() {
-  if (!state.streamHeaders || !state.streamRows.length) {
-    status("저장할 stream 데이터가 아직 없습니다.");
+  downloadRowsCsv({
+    headers: state.streamHeaders,
+    rows: state.streamRows,
+    withMeta: true,
+    prefix: "ads1299_recent_with_config"
+  });
+}
+
+function startRecordingWindow() {
+  if (!state.streamHeaders) {
+    status("아직 stream header가 없습니다. 먼저 Start로 데이터가 들어오는지 확인하세요.");
     return;
   }
-  const headers = state.streamHeaders;
-  const lines = [...adsMetadataLines(), headers.join(",")];
-  state.streamRows.forEach(row => {
-    lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
+  state.recording = true;
+  state.recordHeaders = state.streamHeaders.slice();
+  state.recordRows = [];
+  state.recordStartedAt = new Date();
+  state.recordStoppedAt = null;
+  updateRecordingButtons();
+  status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
+}
+
+function stopRecordingWindow() {
+  if (!state.recording && !state.recordRows.length) {
+    status("저장 중인 구간이 없습니다.");
+    return;
+  }
+  state.recording = false;
+  state.recordStoppedAt = new Date();
+  updateRecordingButtons();
+  downloadRowsCsv({
+    headers: state.recordHeaders,
+    rows: state.recordRows,
+    withMeta: true,
+    prefix: "ads1299_recorded_window"
   });
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  link.href = url;
-  link.download = `ads1299_stream_with_config_${stamp}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-  status(`CSV+설정 저장됨: ${link.download}`);
 }
 
 function exportSummary() {
@@ -3251,7 +3310,8 @@ $("adsWriteRegBtn").addEventListener("click", () => {
   sendAds1299Command(`ADS1299 WREG ${$("adsRegAddr").value.trim()} ${$("adsRegValue").value.trim()}`).catch(err => status(String(err.stack || err)));
 });
 $("adsSendBtn").addEventListener("click", () => sendAds1299Command($("adsCommand").value).catch(err => status(String(err.stack || err))));
-$("csvDownloadBtn").addEventListener("click", downloadStreamCsv);
+$("recordStartBtn").addEventListener("click", startRecordingWindow);
+$("recordStopBtn").addEventListener("click", stopRecordingWindow);
 $("csvMetaDownloadBtn").addEventListener("click", downloadStreamCsvWithMeta);
 
 document.querySelectorAll(".tab").forEach(btn => {
@@ -3322,6 +3382,7 @@ window.addEventListener("resize", draw);
 
 renderAdsChannelConfig();
 renderAdsRegisterMap();
+updateRecordingButtons();
 updateMetrics();
 renderPowerBars();
 draw();
