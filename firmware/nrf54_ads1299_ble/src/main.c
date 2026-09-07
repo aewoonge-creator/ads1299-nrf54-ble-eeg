@@ -261,8 +261,9 @@ static void ble_send_line(const char *line)
 	}
 
 	len = strlen(line);
-	for (offset = 0; offset < len; offset += 18) {
-		size_t chunk_len = MIN((size_t)18, len - offset);
+	const size_t payload_len = MAX((size_t)1, (size_t)bt_gatt_get_mtu(current_conn) - 3);
+	for (offset = 0; offset < len; offset += payload_len) {
+		size_t chunk_len = MIN(payload_len, len - offset);
 
 		err = bt_gatt_notify(current_conn, &uart_service.attrs[4],
 				     line + offset, chunk_len);
@@ -270,7 +271,6 @@ static void ble_send_line(const char *line)
 			LOG_WRN("Notify failed: %d", err);
 			return;
 		}
-		k_sleep(K_MSEC(2));
 	}
 }
 
