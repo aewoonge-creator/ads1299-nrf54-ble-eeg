@@ -836,6 +836,7 @@
     <h2>입력 / 비교 파일</h2>
     <label for="fileInput">파일 A</label>
     <input id="fileInput" type="file" accept=".csv,.txt,.zip">
+    <button id="clearFileBtn" class="soft" type="button">파일 A 내리기</button>
     <label for="compareFileInput">비교 파일 B</label>
     <input id="compareFileInput" type="file" accept=".csv,.txt">
 
@@ -1540,6 +1541,30 @@ function resetLiveStream(reason = "") {
   renderChannels();
   draw();
   if (reason) status(reason);
+}
+
+function clearLoadedFile(reason = "파일 A를 내렸습니다.") {
+  const input = $("fileInput");
+  if (input) input.value = "";
+  state.zip = null;
+  $("zipControls").classList.add("hidden");
+  $("zipEntry").disabled = true;
+  $("zipEntry").innerHTML = "";
+  $("loadZipEntry").disabled = true;
+  state.rows = [];
+  state.headers = [];
+  state.channels = [];
+  state.selected = new Set();
+  state.sourceName = "";
+  state.lastAnalysis = null;
+  state.compare = null;
+  updateMetrics();
+  renderPowerBars();
+  renderChannels();
+  renderComparePowerBars(null);
+  draw();
+  updateAnalysisLog();
+  status(reason);
 }
 
 function resetRecording() {
@@ -3263,6 +3288,7 @@ $("fileInput").addEventListener("change", e => {
   const file = e.target.files[0];
   if (file) handleFile(file).catch(err => status(String(err.stack || err)));
 });
+$("clearFileBtn")?.addEventListener("click", () => clearLoadedFile());
 $("labelInput")?.addEventListener("change", e => {
   const file = e.target.files[0];
   if (file) handleLabelFile(file).catch(err => status(String(err.stack || err)));
