@@ -1239,6 +1239,7 @@ const state = {
   recordRows: [],
   recordStartedAt: null,
   recordStoppedAt: null,
+  lastRecordingUiAt: 0,
   demoLoaded: false,
   labelRows: [],
   labelHeaders: [],
@@ -1595,16 +1596,19 @@ function resetRecording() {
   state.recordRows = [];
   state.recordStartedAt = null;
   state.recordStoppedAt = null;
+  state.lastRecordingUiAt = 0;
   updateRecordingButtons();
 }
 
 function updateRecordingButtons() {
   const start = $("recordStartBtn");
   const stop = $("recordStopBtn");
+  const rate = state.recording ? actualSavedRate(state.recordHeaders, state.recordRows) : null;
+  const rateText = rate && Number.isFinite(rate.hz) ? ` · ${rate.hz.toFixed(1)} Hz` : "";
   if (start) {
     start.disabled = state.recording;
     start.classList.toggle("recording", state.recording);
-    start.textContent = state.recording ? `저장 중 ${state.recordRows.length}` : "저장 시작";
+    start.textContent = state.recording ? `저장 중 ${state.recordRows.length}${rateText}` : "저장 시작";
   }
   if (stop) {
     stop.disabled = !state.recording;
@@ -3183,7 +3187,10 @@ function appendStreamLine(line, source) {
   if (state.recording) {
     if (!state.recordHeaders) state.recordHeaders = state.streamHeaders.slice();
     state.recordRows.push({ ...obj });
-    if (state.recordRows.length % 25 === 0) updateRecordingButtons();
+    if (now - state.lastRecordingUiAt >= 250) {
+      state.lastRecordingUiAt = now;
+      updateRecordingButtons();
+    }
   }
   if (state.streamRows.length > 30000) state.streamRows.splice(0, state.streamRows.length - 30000);
   updateConnectionCards();
@@ -3274,6 +3281,7 @@ function startRecordingWindow() {
   state.recordRows = [];
   state.recordStartedAt = new Date();
   state.recordStoppedAt = null;
+  state.lastRecordingUiAt = performance.now();
   updateRecordingButtons();
   status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
 }
