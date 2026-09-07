@@ -1804,10 +1804,17 @@ function parseCsv(text) {
   }
   row.push(field.replace(/\r$/, ""));
   if (row.some(v => v.trim() !== "")) rows.push(row);
-  const csvRows = rows.filter(r => !String(r[0] || "").trim().startsWith("#"));
+  const csvRows = rows.filter(r => {
+    const first = String(r[0] || "").replace(/^\uFEFF/, "").trim();
+    return first && !first.startsWith("#") && !/^sep=/i.test(first);
+  });
   if (csvRows.length < 2) return { headers: [], rows: [] };
-  const headers = csvRows[0].map(h => h.trim());
-  const data = csvRows.slice(1).map(r => {
+  const headerIndex = Math.max(0, csvRows.findIndex(r => {
+    const candidate = r.map(h => String(h || "").replace(/^\uFEFF/, "").trim());
+    return detectChannels(candidate).length || candidate.some(h => /^(t_ms|time_ms|timestamp|time|sample)$/i.test(h));
+  }));
+  const headers = csvRows[headerIndex].map(h => String(h || "").replace(/^\uFEFF/, "").trim());
+  const data = csvRows.slice(headerIndex + 1).map(r => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = Number.parseFloat(r[i]));
     return obj;
@@ -2737,6 +2744,8 @@ async function handleFile(file) {
   $("zipControls").classList.add("hidden");
   $("zipEntry").disabled = true;
   $("loadZipEntry").disabled = true;
+  state.view = "raw";
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === "raw"));
   if (file.name.toLowerCase().endsWith(".zip")) {
     if (!window.JSZip) {
       status("ZIP 지원 라이브러리를 불러오지 못했습니다. CSV로 압축을 푼 뒤 올려주세요.");
@@ -2754,6 +2763,10 @@ async function handleFile(file) {
   }
   const text = await file.text();
   const parsed = parseCsv(text);
+  if (!parsed.headers.length || !parsed.rows.length) {
+    status(`${file.name}\nCSV에서 헤더/샘플을 찾지 못했습니다. ADS1299 저장 CSV라면 t_ms,ch1 형식의 헤더가 필요합니다.`);
+    return;
+  }
   loadDataset(parsed.headers, parsed.rows, file.name);
   maybeAutoLoadLabels(file.name);
 }
