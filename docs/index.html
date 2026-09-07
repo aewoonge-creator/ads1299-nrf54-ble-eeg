@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-explicit-test-toggle">
+  <meta name="app-version" content="2026-09-07-test-toggle-clean-start">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -878,12 +878,12 @@
         <button id="adsStopBtn">Stop</button>
       </div>
       <div class="row">
-        <button id="adsTestBtn">Test Signal</button>
         <button id="adsRegBtn">Read Regs</button>
+        <button id="adsTestOnBtn" class="soft">Test ON</button>
       </div>
       <div class="row">
-        <button id="adsTestOnBtn" class="soft">Test ON</button>
         <button id="adsTestOffBtn" class="strong">Test OFF</button>
+        <button id="adsApplyConfigBtn">Apply Config</button>
       </div>
       <div class="sectionHeader">
         <h3>실험 Preset</h3>
@@ -972,10 +972,7 @@
       <label class="check"><input id="adsTestOn" type="checkbox">Test</label>
       <label class="check"><input id="adsApplyChannelsOn" type="checkbox" checked>CH enable</label>
     </div>
-    <div class="row">
-      <button id="adsApplyConfigBtn">Apply Config</button>
-      <button id="adsApplyChannelsBtn">Apply Channels</button>
-    </div>
+    <button id="adsApplyChannelsBtn">Apply Channels</button>
     <h2>채널별 설정</h2>
     <div class="adsTableWrap">
       <table class="adsChannelTable">
@@ -2978,20 +2975,6 @@ function adsConfigCommand() {
   ].join(" ");
 }
 
-function adsTestCommand() {
-  return [
-    "ADS1299 CONFIG",
-    `RATE=${$("adsRate").value}`,
-    `GAIN=${$("adsGain").value}`,
-    "MUX=TEST",
-    `REF=${$("adsRef").value}`,
-    `BIAS=${$("adsBiasOn").checked ? "ON" : "OFF"}`,
-    `LOFF=${$("adsLoffOn").checked ? "ON" : "OFF"}`,
-    "TEST=ON",
-    `MASK=${adsChannelMaskHex()}`
-  ].join(" ");
-}
-
 function adsChannelsCommand() {
   return `ADS1299 CHANNELS MASK=${$("adsApplyChannelsOn").checked ? adsChannelMaskHex() : "0x00"}`;
 }
@@ -3204,6 +3187,7 @@ $("adsPingBtn").addEventListener("click", () => sendAds1299Command("PING").catch
 $("adsSpiLoopbackBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI LOOPBACK").catch(err => status(String(err.stack || err))));
 $("adsSpiProbeBtn").addEventListener("click", () => sendAds1299Command("ADS1299 SPI PROBE").catch(err => status(String(err.stack || err))));
 $("adsInitBtn").addEventListener("click", () => {
+  resetLiveStream("Init 중: 이전 plot과 stream 데이터를 초기화했습니다.");
   sendAds1299Command("ADS1299 INIT")
     .then(() => applyAdsMode("Init 후 Test OFF", () => setAdsTestMode(false)))
     .catch(err => status(String(err.stack || err)));
@@ -3217,18 +3201,13 @@ $("adsPresetTemp").addEventListener("click", () => applyAdsPreset("Temperature",
 $("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", { rate: 250, gain: 1, mux: "MVDD", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsPresetBias").addEventListener("click", () => applyAdsPreset("BIAS Measure", { rate: 250, gain: 24, mux: "BIAS_MEAS", ref: "DIFFERENTIAL", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => {
-  state.streamHeaders = null;
-  state.streamRows = [];
+  resetLiveStream("Start 중: 새 stream plot을 준비합니다.");
   rememberDesiredAdsChannels();
-  sendAds1299Command("ADS1299 START").catch(err => status(String(err.stack || err)));
+  sendAds1299Command("ADS1299 START")
+    .then(() => status(`Start 전송됨\n현재 plot 대상: ${$("adsTestOn").checked || $("adsMux").value === "TEST" ? "내부 Test Signal" : "전극 입력"}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`))
+    .catch(err => status(String(err.stack || err)));
 });
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
-$("adsTestBtn").addEventListener("click", () => {
-  state.streamHeaders = null;
-  state.streamRows = [];
-  rememberDesiredAdsChannels();
-  sendAds1299Command(adsTestCommand()).catch(err => status(String(err.stack || err)));
-});
 $("adsTestOnBtn").addEventListener("click", () => {
   applyAdsMode("Test ON", () => setAdsTestMode(true)).catch(err => status(String(err.stack || err)));
 });
