@@ -82,6 +82,24 @@
       margin: 10px 0 5px;
     }
 
+    .labelAction {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 10px 0 5px;
+    }
+
+    .labelAction label {
+      margin: 0;
+    }
+
+    .labelAction button {
+      min-height: 26px;
+      padding: 3px 8px;
+      font-size: 12px;
+    }
+
     input, select, button {
       font: inherit;
       color: var(--ink);
@@ -834,9 +852,11 @@
     <p>CSV, ZIP, USB Serial, BLE stream에서 실제 들어온 EEG 채널만 분석합니다.</p>
 
     <h2>입력 / 비교 파일</h2>
-    <label for="fileInput">파일 A</label>
+    <div class="labelAction">
+      <label for="fileInput">파일 A</label>
+      <button id="clearFileBtn" class="soft" type="button">제거</button>
+    </div>
     <input id="fileInput" type="file" accept=".csv,.txt,.zip">
-    <button id="clearFileBtn" class="soft" type="button">파일 A 내리기</button>
     <label for="compareFileInput">비교 파일 B</label>
     <input id="compareFileInput" type="file" accept=".csv,.txt">
 
