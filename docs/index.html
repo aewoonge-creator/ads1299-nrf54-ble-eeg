@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-07-recording-window">
+  <meta name="app-version" content="2026-09-08-rate-sync-v2">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1305,6 +1305,8 @@ const state = {
   lastLiveStatsAt: 0,
   lastMiniPlotAt: 0,
   adsDesiredChannels: null,
+  adsAppliedRate: 250,
+  recordAdsRate: null,
   eventLog: []
 };
 
@@ -1680,6 +1682,7 @@ function resetRecording() {
   state.recordFirstTime = NaN;
   state.recordLastTime = NaN;
   state.recordTimedSamples = 0;
+  state.recordAdsRate = null;
   updateRecordingButtons();
 }
 
@@ -1797,6 +1800,15 @@ function rememberManualRegisterWrite(addrText, valueText) {
 
 function updateAdsRegisterValueFromLine(line) {
   const text = String(line).trim();
+  const stateLine = /^FW STATE\b.*\bRATE=(\d+)/i.exec(text);
+  if (stateLine) {
+    const rate = Number(stateLine[1]);
+    if (Number.isFinite(rate) && rate > 0) {
+      state.adsAppliedRate = rate;
+      if ($("adsRate")) $("adsRate").value = String(rate);
+      updateAdsChannelPreview();
+    }
+  }
   if (!/^REG\b/i.test(text)) return;
   const idLine = /^REG\s+ID\s+(?:0x)?([0-9a-f]{1,2})/i.exec(text);
   if (idLine) {
@@ -2024,12 +2036,12 @@ function isKnownMetaColumn(name) {
 }
 
 function detectTimeColumn(headers) {
-  const candidates = ["t_ms", "time_ms", "Timestamp", "TimeStamp", "sessionTime", "trialTime", "time"];
+  const candidates = ["t_us", "time_us", "t_ms", "time_ms", "Timestamp", "TimeStamp", "sessionTime", "trialTime", "time"];
   return candidates.find(c => headers.includes(c)) || headers[0] || "";
 }
 
 function timeColumnOptions(headers) {
-  const likely = headers.filter(h => /^(timestamp|time|time_ms|t_ms|sessiontime|trialtime|sample|samples|t)$/i.test(h));
+  const likely = headers.filter(h => /^(timestamp|time|time_us|t_us|time_ms|t_ms|sessiontime|trialtime|sample|samples|t)$/i.test(h));
   return ["__sample_index__", ...likely];
 }
 
@@ -2038,6 +2050,7 @@ function timeColumnLabel(value) {
 }
 
 function timeColumnScaleToSeconds(timeCol) {
+  if (/(^t_us$|_us$|usec|microsecond)/i.test(timeCol || "")) return 0.000001;
   return /(^t_ms$|_ms$|msec|millisecond)/i.test(timeCol || "") ? 0.001 : 1;
 }
 
@@ -3361,7 +3374,7 @@ function appendStreamLine(line, source) {
     resetRecording();
   }
   if (!state.streamHeaders && allNumeric) {
-    state.streamHeaders = ["t_ms", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
+    state.streamHeaders = ["t_us", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
     state.streamRows = [];
     state.streamSampleCount = 0;
     status(`${source}\nADS1299 numeric stream: ${state.streamHeaders.join(", ")}`);
@@ -3408,13 +3421,13 @@ function appendStreamLine(line, source) {
   }
 }
 
-function downloadRowsCsv({ headers, rows, withMeta, prefix }) {
+function downloadRowsCsv({ headers, rows, withMeta, prefix, adsRate }) {
   if (!headers || !rows.length) {
     status("저장할 stream 데이터가 아직 없습니다.");
     return;
   }
   const rate = actualSavedRate(headers, rows);
-  const lines = withMeta ? [...adsMetadataLines(headers, rows, rate), headers.join(",")] : [headers.join(",")];
+  const lines = withMeta ? [...adsMetadataLines(headers, rows, rate, { adsRate }), headers.join(",")] : [headers.join(",")];
   rows.forEach(row => {
     lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
   });
@@ -3426,12 +3439,12 @@ function downloadRowsCsv({ headers, rows, withMeta, prefix }) {
   link.download = `${prefix}_${stamp}.csv`;
   link.click();
   URL.revokeObjectURL(url);
-  const rateText = Number.isFinite(rate.hz) ? `\n실제 저장 Hz(t_ms 기준): ${rate.hz.toFixed(2)} Hz` : "";
+  const rateText = Number.isFinite(rate.hz) ? `\n실제 저장 Hz(${rate.timeCol} 기준): ${rate.hz.toFixed(2)} Hz` : "";
   status(`CSV 저장됨: ${link.download}\n샘플 ${rows.length}개${rateText}`);
 }
 
 function actualSavedRate(headers, rows) {
-  const timeCol = headers?.find(h => /^(t_ms|time_ms|timestamp|time|sessiontime|trialtime)$/i.test(h));
+  const timeCol = headers?.find(h => /^(t_us|time_us|t_ms|time_ms|timestamp|time|sessiontime|trialtime)$/i.test(h));
   if (!timeCol || !rows || rows.length < 2) {
     return { timeCol: timeCol || "", samples: rows?.length || 0, durationSec: NaN, hz: NaN };
   }
@@ -3453,18 +3466,26 @@ function actualSavedRate(headers, rows) {
   return { timeCol, samples, durationSec, hz };
 }
 
-function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows, rate = actualSavedRate(headers, rows)) {
+function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows, rate = actualSavedRate(headers, rows), options = {}) {
   const regs = adsRegisters
     .map(reg => `${reg.name}=${Number.isFinite(adsRegisterValues[reg.addr]) ? hexByte(adsRegisterValues[reg.addr]) : "--"}`)
     .join(" ");
   const actualHz = Number.isFinite(rate.hz) ? rate.hz.toFixed(4) : "";
   const duration = Number.isFinite(rate.durationSec) ? rate.durationSec.toFixed(4) : "";
+  const configuredRate = options.adsRate || state.adsAppliedRate || Number($("adsRate")?.value) || "";
+  const configuredRateNum = Number(configuredRate);
+  const rateDiff = Number.isFinite(rate.hz) && configuredRateNum > 0 ? Math.abs(rate.hz - configuredRateNum) : NaN;
+  const rateMatch = Number.isFinite(rateDiff)
+    ? (rateDiff <= Math.max(1, configuredRateNum * 0.01) ? "MATCH" : "MISMATCH")
+    : "";
   return [
     `# source=${state.sourceName || "BLE ADS1299"}`,
     `# saved_at=${new Date().toISOString()}`,
-    `# ads_config_rate_sps=${$("adsRate")?.value || ""}`,
+    `# ads_config_rate_sps=${configuredRate}`,
     `# actual_saved_rate_hz=${actualHz}`,
     `# actual_rate_time_column=${rate.timeCol || ""}`,
+    `# csv_timebase=ads_sample_clock`,
+    `# rate_match_status=${rateMatch}`,
     `# saved_samples=${rows?.length || 0}`,
     `# saved_duration_s=${duration}`,
     `# ads_gain=${$("adsGain")?.value || ""}`,
@@ -3483,7 +3504,8 @@ function downloadStreamCsvWithMeta() {
     headers: state.streamHeaders,
     rows: state.streamRows,
     withMeta: true,
-    prefix: "ads1299_recent_with_config"
+    prefix: "ads1299_recent_with_config",
+    adsRate: state.adsAppliedRate
   });
 }
 
@@ -3501,6 +3523,7 @@ function startRecordingWindow() {
   state.recordFirstTime = NaN;
   state.recordLastTime = NaN;
   state.recordTimedSamples = 0;
+  state.recordAdsRate = state.adsAppliedRate || Number($("adsRate")?.value) || 250;
   updateRecordingButtons();
   status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
 }
@@ -3517,7 +3540,8 @@ function stopRecordingWindow() {
     headers: state.recordHeaders,
     rows: state.recordRows,
     withMeta: true,
-    prefix: "ads1299_recorded_window"
+    prefix: "ads1299_recorded_window",
+    adsRate: state.recordAdsRate
   });
 }
 

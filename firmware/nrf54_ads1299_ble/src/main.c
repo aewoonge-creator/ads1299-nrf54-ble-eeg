@@ -22,7 +22,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
-#define FW_VERSION            "2026-09-08-250sps-sync-v1"
+#define FW_VERSION            "2026-09-08-rate-sync-v2"
 #define ADS1299_CONFIG2_ADDR  0x02
 #define ADS1299_CH1SET_ADDR   0x05
 #define ADS1299_CH8SET_ADDR   0x0C
@@ -129,11 +129,26 @@ static uint8_t stream_channel_mask(void)
 	return ads_enabled_channel_mask ? ads_enabled_channel_mask : 0xFF;
 }
 
-static int64_t stream_period_ms(void)
+static int64_t uptime_us(void)
 {
-	uint32_t rate = ads_sample_rate_sps ? ads_sample_rate_sps : 250;
+	return k_ticks_to_us_floor64(k_uptime_ticks());
+}
 
-	return MAX((int64_t)1, (int64_t)((1000U + rate - 1U) / rate));
+static uint32_t stream_rate_sps(void)
+{
+	return ads_sample_rate_sps ? ads_sample_rate_sps : 250;
+}
+
+static int64_t stream_period_us(void)
+{
+	uint32_t rate = stream_rate_sps();
+
+	return MAX((int64_t)1, (int64_t)((1000000U + rate - 1U) / rate));
+}
+
+static uint32_t stream_sample_time_us(uint32_t sample_index)
+{
+	return (uint32_t)(((uint64_t)sample_index * 1000000ULL) / stream_rate_sps());
 }
 
 static void send_stream_header(void)
@@ -142,7 +157,7 @@ static void send_stream_header(void)
 	size_t used;
 	uint8_t mask = stream_channel_mask();
 
-	used = snprintk(line, sizeof(line), "t_ms");
+	used = snprintk(line, sizeof(line), "t_us");
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		if ((mask & BIT(i)) == 0) {
 			continue;
@@ -695,8 +710,10 @@ int main(void)
 		char line[160];
 		static int64_t last_auto_probe_ms;
 		static int64_t last_stream_status_ms;
-		static int64_t last_sample_ms;
-		int64_t now_ms = k_uptime_get();
+		static int64_t next_sample_us;
+		static uint32_t stream_sample_index;
+		static bool stream_was_active;
+		int64_t now_us = uptime_us();
 		int sample_err;
 
 		poll_rtt_commands();
@@ -739,11 +756,31 @@ int main(void)
 			}
 		}
 
-		if (ads1299_is_streaming() && now_ms - last_sample_ms >= stream_period_ms()) {
-			last_sample_ms = now_ms;
+		if (!ads1299_is_streaming()) {
+			stream_was_active = false;
+		}
+
+		if (ads1299_is_streaming() && !stream_was_active) {
+			stream_was_active = true;
+			stream_sample_index = 0;
+			next_sample_us = now_us;
+		}
+
+		if (ads1299_is_streaming() && now_us >= next_sample_us) {
+			int64_t period_us = stream_period_us();
+
 			sample_err = ads1299_read_sample(&sample);
 			if (sample_err == 0) {
+				sample.t_ms = stream_sample_time_us(stream_sample_index++);
 				send_stream_sample(&sample);
+				next_sample_us += period_us;
+				if (uptime_us() - next_sample_us > period_us &&
+				    k_uptime_get() - last_stream_status_ms > 1000) {
+					last_stream_status_ms = k_uptime_get();
+					snprintk(line, sizeof(line), "STREAM LAG RATE=%u\n",
+						 stream_rate_sps());
+					ble_send_line(line);
+				}
 			} else if (k_uptime_get() - last_stream_status_ms > 1000) {
 				last_stream_status_ms = k_uptime_get();
 				snprintk(line, sizeof(line), "STREAM ERR %d\n", sample_err);
@@ -751,7 +788,7 @@ int main(void)
 			}
 		}
 
-		k_sleep(K_MSEC(1));
+		k_sleep(K_USEC(100));
 	}
 
 	return 0;
