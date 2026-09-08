@@ -126,6 +126,13 @@ static uint8_t stream_channel_mask(void)
 	return ads_enabled_channel_mask ? ads_enabled_channel_mask : 0xFF;
 }
 
+static int64_t stream_period_ms(void)
+{
+	uint32_t rate = ads_sample_rate_sps ? ads_sample_rate_sps : 250;
+
+	return MAX((int64_t)1, (int64_t)((1000U + rate - 1U) / rate));
+}
+
 static void send_stream_header(void)
 {
 	char line[80];
@@ -677,6 +684,8 @@ int main(void)
 		char line[160];
 		static int64_t last_auto_probe_ms;
 		static int64_t last_stream_status_ms;
+		static int64_t last_sample_ms;
+		int64_t now_ms = k_uptime_get();
 		int sample_err;
 
 		poll_rtt_commands();
@@ -719,14 +728,16 @@ int main(void)
 			}
 		}
 
-		sample_err = ads1299_read_sample(&sample);
-		if (sample_err == 0) {
-			send_stream_sample(&sample);
-		} else if (ads1299_is_streaming() &&
-			   k_uptime_get() - last_stream_status_ms > 1000) {
-			last_stream_status_ms = k_uptime_get();
-			snprintk(line, sizeof(line), "STREAM ERR %d\n", sample_err);
-			ble_send_line(line);
+		if (ads1299_is_streaming() && now_ms - last_sample_ms >= stream_period_ms()) {
+			last_sample_ms = now_ms;
+			sample_err = ads1299_read_sample(&sample);
+			if (sample_err == 0) {
+				send_stream_sample(&sample);
+			} else if (k_uptime_get() - last_stream_status_ms > 1000) {
+				last_stream_status_ms = k_uptime_get();
+				snprintk(line, sizeof(line), "STREAM ERR %d\n", sample_err);
+				ble_send_line(line);
+			}
 		}
 
 		k_sleep(K_MSEC(1));
