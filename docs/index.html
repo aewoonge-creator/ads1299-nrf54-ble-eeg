@@ -2084,12 +2084,25 @@ function refreshLivePlot(source) {
   const selected = [...state.selected].filter(ch => state.channels.includes(ch));
   const data = {};
   selected.forEach(ch => data[ch] = valuesFor(rows, ch));
+  const fullAnalysis = needsFullLiveAnalysis();
   const filtered = {};
-  selected.forEach(ch => filtered[ch] = state.view === "filtered" ? filterSignal(data[ch], fs) : data[ch]);
+  const psds = {};
+  const ffts = {};
+  selected.forEach(ch => {
+    filtered[ch] = state.view === "filtered" || fullAnalysis ? filterSignal(data[ch], fs) : data[ch];
+    if (fullAnalysis) {
+      const maxFreq = Math.min(Number($("maxFreqInput").value) || 45, fs / 2);
+      psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= maxFreq);
+      ffts[ch] = spectrum(filtered[ch], fs).filter(d => d.f <= maxFreq);
+    }
+  });
+  const avgPsd = averageCurves(Object.values(psds));
   state.sourceName = source;
-  state.lastAnalysis = { rows, fs, timeCol: selectedTime, selected, data, filtered, psds: {}, ffts: {}, avgPsd: [], powers: {} };
+  state.lastAnalysis = { rows, fs, timeCol: selectedTime, selected, data, filtered, psds, ffts, avgPsd, powers: bandPowers(avgPsd) };
+  if (state.view === "compare") buildCompare();
   if (state.channels.join(",") !== previousChannelsKey) renderChannels();
   updateMetrics();
+  if (fullAnalysis) renderPowerBars();
   draw();
 }
 
@@ -2111,6 +2124,10 @@ function fillSelectIfChanged(select, values, selected, labeler = v => v) {
   } else {
     select.value = selected;
   }
+}
+
+function needsFullLiveAnalysis() {
+  return ["bands", "fft", "psd", "compare"].includes(state.view);
 }
 
 function sliceRows() {
@@ -3352,7 +3369,8 @@ function appendStreamLine(line, source) {
     state.lastLiveStatsAt = now;
     renderLiveChannelStats();
   }
-  if (now - state.lastStreamPlotAt >= 250) {
+  const plotIntervalMs = needsFullLiveAnalysis() ? 1000 : 250;
+  if (now - state.lastStreamPlotAt >= plotIntervalMs) {
     state.lastStreamPlotAt = now;
     refreshLivePlot(source);
   }
@@ -3588,8 +3606,8 @@ document.querySelectorAll(".tab").forEach(btn => {
     document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     state.view = btn.dataset.view;
-    if (state.view === "compare") buildCompare();
-    draw();
+    if (state.rows.length) analyze();
+    else draw();
   });
 });
 
