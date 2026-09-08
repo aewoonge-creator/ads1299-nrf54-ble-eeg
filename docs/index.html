@@ -659,6 +659,46 @@
       background: #fbfcff;
     }
 
+    .liveCheck {
+      border-top: 1px solid var(--line);
+      padding: 10px 12px 12px;
+      background: #fbfcff;
+    }
+
+    .liveCheck h2 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    .liveGrid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(92px, 1fr));
+      gap: 6px;
+    }
+
+    .liveChip {
+      border: 1px solid #d7dce5;
+      border-radius: 6px;
+      background: #fff;
+      padding: 7px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .liveChip strong {
+      display: flex;
+      justify-content: space-between;
+      gap: 5px;
+      color: var(--ink);
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+
+    .liveChip.hot {
+      border-color: #0f766e;
+      box-shadow: inset 3px 0 0 #0f766e;
+    }
+
     .sidePanel {
       grid-column: 2;
       grid-row: 3;
@@ -830,6 +870,7 @@
       .channelMini canvas { min-height: 120px; }
       .channelPlotGrid { grid-template-columns: 1fr; }
       .analysisGrid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .liveGrid { grid-template-columns: repeat(2, minmax(92px, 1fr)); }
       .regionGrid { grid-template-columns: 1fr 1fr; }
       .plotHeader {
         align-items: stretch;
@@ -1179,6 +1220,10 @@
           <div id="analysisLog" class="analysisGrid"></div>
         </div>
         <canvas id="plot"></canvas>
+        <div class="liveCheck">
+          <h2>Live 채널 확인</h2>
+          <div id="liveChannelStats" class="liveGrid"></div>
+        </div>
         <div class="powerPanel">
           <h2>상대 Power</h2>
           <div id="powerBars" class="powerGrid"></div>
@@ -1227,6 +1272,7 @@ const state = {
   lastAnalysis: null,
   streamHeaders: null,
   streamRows: [],
+  streamSampleCount: 0,
   lastStreamPlotAt: 0,
   recording: false,
   recordHeaders: null,
@@ -1250,6 +1296,9 @@ const state = {
   bleTxCharacteristic: null,
   streamStartedAt: 0,
   lastPacketAt: 0,
+  lastUiUpdateAt: 0,
+  lastLiveStatsAt: 0,
+  lastMiniPlotAt: 0,
   adsDesiredChannels: null,
   eventLog: []
 };
@@ -1552,7 +1601,11 @@ function syncPlotSelectionToAdsChannels() {
 function resetLiveStream(reason = "") {
   state.streamHeaders = null;
   state.streamRows = [];
+  state.streamSampleCount = 0;
   state.lastStreamPlotAt = 0;
+  state.lastUiUpdateAt = 0;
+  state.lastLiveStatsAt = 0;
+  state.lastMiniPlotAt = 0;
   resetRecording();
   state.rows = [];
   state.headers = [];
@@ -1561,6 +1614,7 @@ function resetLiveStream(reason = "") {
   state.lastAnalysis = null;
   updateMetrics();
   renderPowerBars();
+  renderLiveChannelStats();
   renderChannels();
   draw();
   if (reason) status(reason);
@@ -1760,10 +1814,10 @@ function appendLog(msg) {
 function updateConnectionCards() {
   setText("bleState", state.bleDevice?.gatt?.connected ? "연결됨" : "대기");
   setText("cmdState", state.bleRxCharacteristic ? "준비됨" : "미연결");
-  setText("sampleCount", String(state.streamRows.length));
-  if (state.streamStartedAt && state.streamRows.length > 1) {
+  setText("sampleCount", String(state.streamSampleCount || state.streamRows.length));
+  if (state.streamStartedAt && (state.streamSampleCount || state.streamRows.length) > 1) {
     const elapsed = Math.max((performance.now() - state.streamStartedAt) / 1000, 0.001);
-    setText("rxHz", (state.streamRows.length / elapsed).toFixed(1));
+    setText("rxHz", ((state.streamSampleCount || state.streamRows.length) / elapsed).toFixed(1));
   } else {
     setText("rxHz", "0");
   }
@@ -1787,6 +1841,38 @@ function updateEegStatus() {
   setText("eegRms", rms.toFixed(1));
   setText("eegP2p", (max - min).toFixed(1));
   setText("eegRange", `${min.toFixed(0)} / ${max.toFixed(0)}`);
+}
+
+function liveChannelStats(rows = state.streamRows, channels = state.streamHeaders?.filter(h => /^ch\d+$/i.test(h)) || []) {
+  const recent = rows.slice(-250);
+  return channels.map(ch => {
+    const values = recent.map(r => r[ch]).filter(Number.isFinite);
+    if (values.length < 2) return { ch, samples: values.length, mean: NaN, rms: NaN, p2p: NaN };
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+    const centered = values.map(v => v - mean);
+    const rms = Math.sqrt(centered.reduce((sum, v) => sum + v * v, 0) / centered.length);
+    const p2p = Math.max(...values) - Math.min(...values);
+    return { ch, samples: values.length, mean, rms, p2p };
+  });
+}
+
+function renderLiveChannelStats() {
+  const el = $("liveChannelStats");
+  if (!el) return;
+  const stats = liveChannelStats();
+  if (!stats.length) {
+    el.innerHTML = `<div class="channelEmpty">Start 후 수신되는 채널별 신호 크기가 여기에 표시됩니다.</div>`;
+    return;
+  }
+  const finite = stats.filter(s => Number.isFinite(s.p2p));
+  const maxP2p = finite.length ? Math.max(...finite.map(s => s.p2p)) : NaN;
+  el.innerHTML = stats.map(s => {
+    const hot = Number.isFinite(maxP2p) && s.p2p === maxP2p && maxP2p > 0;
+    const p2p = Number.isFinite(s.p2p) ? s.p2p.toFixed(0) : "-";
+    const rms = Number.isFinite(s.rms) ? s.rms.toFixed(0) : "-";
+    const dc = Number.isFinite(s.mean) ? s.mean.toFixed(0) : "-";
+    return `<div class="liveChip ${hot ? "hot" : ""}"><strong><span>${escapeHtml(s.ch)}</span><span>${hot ? "MAX" : ""}</span></strong>P2P ${p2p}<br>RMS ${rms}<br>DC ${dc}</div>`;
+  }).join("");
 }
 
 function shortName(name) {
@@ -1963,7 +2049,7 @@ function loadDataset(headers, rows, name, options = {}) {
   const timeCol = detectTimeColumn(headers);
   const timeOptions = timeColumnOptions(headers);
   const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
-  fillSelect($("timeColumn"), timeOptions, selectedTime, timeColumnLabel);
+  fillSelectIfChanged($("timeColumn"), timeOptions, selectedTime, timeColumnLabel);
   const fs = estimateFs(state.rows, selectedTime, Number($("fsInput").value) || 250);
   $("fsInput").value = fs;
   buildConditions();
@@ -1974,6 +2060,39 @@ function loadDataset(headers, rows, name, options = {}) {
   }
 }
 
+function refreshLivePlot(source) {
+  const rows = state.streamRows.slice(-LIVE_PLOT_MAX_ROWS);
+  const headers = state.streamHeaders || [];
+  const previousSelected = new Set(state.selected || []);
+  const previousChannelsKey = state.channels.join(",");
+  state.headers = headers;
+  state.rows = rows;
+  state.channels = detectChannels(headers);
+  const desired = state.adsDesiredChannels?.filter(ch => state.channels.includes(ch)) || [];
+  if (desired.length) {
+    state.selected = new Set(desired);
+  } else {
+    const kept = state.channels.filter(ch => previousSelected.has(ch));
+    state.selected = new Set(kept.length ? kept : state.channels.slice(0, Math.min(8, state.channels.length)));
+  }
+  const timeCol = detectTimeColumn(headers);
+  const timeOptions = timeColumnOptions(headers);
+  const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
+  fillSelectIfChanged($("timeColumn"), timeOptions, selectedTime, timeColumnLabel);
+  const fs = estimateFs(rows, selectedTime, Number($("fsInput").value) || 250);
+  $("fsInput").value = fs;
+  const selected = [...state.selected].filter(ch => state.channels.includes(ch));
+  const data = {};
+  selected.forEach(ch => data[ch] = valuesFor(rows, ch));
+  const filtered = {};
+  selected.forEach(ch => filtered[ch] = state.view === "filtered" ? filterSignal(data[ch], fs) : data[ch]);
+  state.sourceName = source;
+  state.lastAnalysis = { rows, fs, timeCol: selectedTime, selected, data, filtered, psds: {}, ffts: {}, avgPsd: [], powers: {} };
+  if (state.channels.join(",") !== previousChannelsKey) renderChannels();
+  updateMetrics();
+  draw();
+}
+
 function fillSelect(select, values, selected, labeler = v => v) {
   select.innerHTML = "";
   values.forEach(v => {
@@ -1982,6 +2101,16 @@ function fillSelect(select, values, selected, labeler = v => v) {
     o.selected = v === selected;
     select.appendChild(o);
   });
+}
+
+function fillSelectIfChanged(select, values, selected, labeler = v => v) {
+  const current = [...select.options].map(o => o.value);
+  const changed = current.length !== values.length || values.some((v, i) => String(v) !== current[i]);
+  if (changed) {
+    fillSelect(select, values, selected, labeler);
+  } else {
+    select.value = selected;
+  }
 }
 
 function sliceRows() {
@@ -2418,7 +2547,11 @@ function draw() {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, w, h);
   const a = state.lastAnalysis;
-  renderChannelMiniPlots();
+  const now = performance.now();
+  if (!state.streamHeaders || now - state.lastMiniPlotAt >= 1000 || !a || !a.selected.length) {
+    state.lastMiniPlotAt = now;
+    renderChannelMiniPlots();
+  }
   if (!a || !a.selected.length) {
     $("plotTitle").textContent = "EEG Plot";
     $("plotSub").textContent = "CSV/ZIP 파일을 올리거나 USB/BLE stream을 연결하세요.";
@@ -3003,6 +3136,7 @@ async function connectBle() {
   state.streamStartedAt = performance.now();
   state.streamHeaders = null;
   state.streamRows = [];
+  state.streamSampleCount = 0;
   state.adsDesiredChannels = null;
   updateConnectionCards();
   status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
@@ -3159,7 +3293,6 @@ function appendStreamLine(line, source) {
   if (!line.trim()) return;
   const now = performance.now();
   state.lastPacketAt = now;
-  updateConnectionCards();
   const trimmed = line.trim();
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
@@ -3175,21 +3308,25 @@ function appendStreamLine(line, source) {
   if (allNumeric && state.streamHeaders && cells.length !== state.streamHeaders.length) {
     state.streamHeaders = null;
     state.streamRows = [];
+    state.streamSampleCount = 0;
     resetRecording();
   }
   if (!state.streamHeaders && allNumeric) {
     state.streamHeaders = ["t_ms", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
     state.streamRows = [];
+    state.streamSampleCount = 0;
     status(`${source}\nADS1299 numeric stream: ${state.streamHeaders.join(", ")}`);
   } else if (!state.streamHeaders || !allNumeric) {
     state.streamHeaders = cells;
     state.streamRows = [];
+    state.streamSampleCount = 0;
     status(`${source}\nheader: ${cells.join(", ")}`);
     return;
   }
   const obj = {};
   state.streamHeaders.forEach((h, i) => obj[h] = Number.parseFloat(cells[i]));
   state.streamRows.push(obj);
+  state.streamSampleCount++;
   if (state.recording) {
     if (!state.recordHeaders) state.recordHeaders = state.streamHeaders.slice();
     state.recordRows.push({ ...obj });
@@ -3206,11 +3343,18 @@ function appendStreamLine(line, source) {
     }
   }
   if (state.streamRows.length > 30000) state.streamRows.splice(0, state.streamRows.length - 30000);
-  updateConnectionCards();
-  updateEegStatus();
-  if (now - state.lastStreamPlotAt >= 125) {
+  if (now - state.lastUiUpdateAt >= 250) {
+    state.lastUiUpdateAt = now;
+    updateConnectionCards();
+    updateEegStatus();
+  }
+  if (now - state.lastLiveStatsAt >= 500) {
+    state.lastLiveStatsAt = now;
+    renderLiveChannelStats();
+  }
+  if (now - state.lastStreamPlotAt >= 250) {
     state.lastStreamPlotAt = now;
-    loadDataset(state.streamHeaders, state.streamRows.slice(-LIVE_PLOT_MAX_ROWS), source, { silent: true });
+    refreshLivePlot(source);
   }
 }
 
@@ -3404,7 +3548,7 @@ $("adsStartBtn").addEventListener("click", () => {
   copyGlobalAdsSettingsToChannels();
   rememberDesiredAdsChannels();
   sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"])
-    .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`))
+    .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nstream 채널: ${enabledAdsChannelsFromTable().map(ch => `ch${ch}`).join(", ") || "없음"}\nLive 채널 확인에서 P2P/RMS가 가장 크게 반응하는 채널을 보세요.`))
     .catch(err => status(String(err.stack || err)));
 });
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));

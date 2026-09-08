@@ -22,7 +22,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
-#define FW_VERSION            "2026-09-08-measure-only-v1"
+#define FW_VERSION            "2026-09-08-stable-live-v1"
 #define ADS1299_CONFIG2_ADDR  0x02
 #define ADS1299_CH1SET_ADDR   0x05
 #define ADS1299_CH8SET_ADDR   0x0C
@@ -250,11 +250,22 @@ static const struct bt_data ad[] = {
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	struct bt_le_conn_param param = {
+		.interval_min = 6,
+		.interval_max = 12,
+		.latency = 0,
+		.timeout = 400,
+	};
+
 	if (err) {
 		LOG_ERR("Connection failed: %u", err);
 		return;
 	}
 	current_conn = bt_conn_ref(conn);
+	err = bt_conn_le_param_update(conn, &param);
+	if (err) {
+		LOG_WRN("Connection parameter update failed: %d", err);
+	}
 	LOG_INF("Connected");
 }
 
