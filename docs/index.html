@@ -490,7 +490,7 @@
       grid-column: 1;
       grid-row: 2 / 4;
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      grid-template-rows: auto auto minmax(380px, 1fr) auto auto;
       min-width: 0;
       min-height: 0;
       overflow: hidden;
@@ -661,27 +661,28 @@
 
     .liveCheck {
       border-top: 1px solid var(--line);
-      padding: 10px 12px 12px;
+      padding: 6px 10px 8px;
       background: #fbfcff;
     }
 
     .liveCheck h2 {
-      margin: 0 0 8px;
-      font-size: 14px;
+      margin: 0 0 5px;
+      font-size: 12px;
     }
 
     .liveGrid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(92px, 1fr));
-      gap: 6px;
+      grid-template-columns: repeat(8, minmax(72px, 1fr));
+      gap: 5px;
     }
 
     .liveChip {
       border: 1px solid #d7dce5;
       border-radius: 6px;
       background: #fff;
-      padding: 7px;
-      font-size: 11px;
+      padding: 5px 6px;
+      font-size: 10px;
+      line-height: 1.25;
       color: var(--muted);
     }
 
@@ -690,8 +691,8 @@
       justify-content: space-between;
       gap: 5px;
       color: var(--ink);
-      font-size: 12px;
-      margin-bottom: 3px;
+      font-size: 11px;
+      margin-bottom: 2px;
     }
 
     .liveChip.hot {
@@ -870,7 +871,7 @@
       .channelMini canvas { min-height: 120px; }
       .channelPlotGrid { grid-template-columns: 1fr; }
       .analysisGrid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
-      .liveGrid { grid-template-columns: repeat(2, minmax(92px, 1fr)); }
+      .liveGrid { grid-template-columns: repeat(4, minmax(70px, 1fr)); }
       .regionGrid { grid-template-columns: 1fr 1fr; }
       .plotHeader {
         align-items: stretch;
@@ -1870,8 +1871,7 @@ function renderLiveChannelStats() {
     const hot = Number.isFinite(maxP2p) && s.p2p === maxP2p && maxP2p > 0;
     const p2p = Number.isFinite(s.p2p) ? s.p2p.toFixed(0) : "-";
     const rms = Number.isFinite(s.rms) ? s.rms.toFixed(0) : "-";
-    const dc = Number.isFinite(s.mean) ? s.mean.toFixed(0) : "-";
-    return `<div class="liveChip ${hot ? "hot" : ""}"><strong><span>${escapeHtml(s.ch)}</span><span>${hot ? "MAX" : ""}</span></strong>P2P ${p2p}<br>RMS ${rms}<br>DC ${dc}</div>`;
+    return `<div class="liveChip ${hot ? "hot" : ""}"><strong><span>${escapeHtml(s.ch)}</span><span>${hot ? "MAX" : ""}</span></strong>P2P ${p2p}<br>RMS ${rms}</div>`;
   }).join("");
 }
 
