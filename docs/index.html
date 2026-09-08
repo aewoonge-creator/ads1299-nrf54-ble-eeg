@@ -1433,7 +1433,7 @@ function renderAdsChannelConfig() {
       </tr>
     `;
   }).join("");
-  body.querySelectorAll("input, select").forEach(el => el.addEventListener("change", updateAdsChannelPreview));
+  body.querySelectorAll("input, select").forEach(el => el.addEventListener("change", () => updateAdsChannelPreview(true)));
   updateAdsChannelPreview();
 }
 
@@ -1450,10 +1450,14 @@ function chSetValue(row) {
   return (powerDown ? 0x80 : 0) | ((adsGainBits[gain] ?? 0b110) << 4) | srb2 | (adsMuxBits[mux] ?? 0);
 }
 
-function updateAdsChannelPreview() {
+function updateAdsChannelPreview(syncChannelsText = false) {
   adsChannelRows().forEach(row => {
     row.querySelector(".ads-ch-value").textContent = hexByte(chSetValue(row));
   });
+  if (syncChannelsText) {
+    const enabled = enabledAdsChannelsFromTable();
+    $("adsChannels").value = enabled.join(",");
+  }
   updateRegisterPreviewFromChannelTable();
 }
 
@@ -1483,7 +1487,7 @@ function copyGlobalAdsSettingsToChannels() {
   const gain = $("adsGain").value;
   const mux = $("adsMux").value === "TEST" ? "NORMAL" : $("adsMux").value;
   $("adsMux").value = mux;
-  const enabledSet = new Set(String($("adsChannels").value).split(",").map(v => Number(v.trim())).filter(v => v >= 1 && v <= 8));
+  const enabledSet = channelsTextSet();
   adsChannelRows().forEach(row => {
     const ch = Number(row.dataset.adsCh);
     row.querySelector(".ads-ch-enable").checked = enabledSet.has(ch);
@@ -1500,12 +1504,34 @@ function copyGlobalAdsSettingsToChannels() {
   updateAdsChannelPreview();
 }
 
+function channelsTextSet() {
+  return new Set(String($("adsChannels").value).split(",").map(v => Number(v.trim())).filter(v => v >= 1 && v <= 8));
+}
+
+function syncChannelsTextToTable() {
+  const enabledSet = channelsTextSet();
+  adsChannelRows().forEach(row => {
+    const ch = Number(row.dataset.adsCh);
+    row.querySelector(".ads-ch-enable").checked = enabledSet.has(ch);
+    row.querySelector(".ads-ch-pd").checked = !enabledSet.has(ch);
+  });
+  updateAdsChannelPreview();
+}
+
 function setAllAdsChannelsEnabled(enabled) {
   adsChannelRows().forEach(row => {
     row.querySelector(".ads-ch-enable").checked = enabled;
     row.querySelector(".ads-ch-pd").checked = !enabled;
   });
   $("adsChannels").value = enabled ? "1,2,3,4,5,6,7,8" : "";
+  updateAdsChannelPreview();
+}
+
+function forceElectrodeInputMode() {
+  $("adsMux").value = "NORMAL";
+  adsChannelRows().forEach(row => {
+    row.querySelector(".ads-ch-mux").value = "NORMAL";
+  });
   updateAdsChannelPreview();
 }
 
@@ -3560,8 +3586,7 @@ $("adsInitBtn").addEventListener("click", () => {
   resetLiveStream("Init 중: 이전 plot과 stream 데이터를 초기화했습니다.");
   sendAds1299Command("ADS1299 INIT")
     .then(() => applyAdsMode("Init 후 전극 입력", () => {
-      $("adsMux").value = "NORMAL";
-      copyGlobalAdsSettingsToChannels();
+      forceElectrodeInputMode();
     }))
     .catch(err => status(String(err.stack || err)));
 });
@@ -3574,8 +3599,7 @@ $("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", 
 $("adsPresetBias").addEventListener("click", () => applyAdsPreset("BIAS Measure", { rate: 250, gain: 24, mux: "BIAS_MEAS", ref: "DIFFERENTIAL", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => {
   resetLiveStream("Start 중: 새 stream plot을 준비합니다.");
-  $("adsMux").value = "NORMAL";
-  copyGlobalAdsSettingsToChannels();
+  forceElectrodeInputMode();
   rememberDesiredAdsChannels();
   sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"])
     .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nstream 채널: ${enabledAdsChannelsFromTable().map(ch => `ch${ch}`).join(", ") || "없음"}\nLive 채널 확인에서 P2P/RMS가 가장 크게 반응하는 채널을 보세요.`))
@@ -3628,10 +3652,11 @@ document.querySelectorAll(".tab").forEach(btn => {
   if (el) el.addEventListener("change", analyze);
 });
 
-["adsRate","adsGain","adsMux","adsChannels","adsRef","adsBiasOn","adsLoffOn"].forEach(id => {
+["adsRate","adsGain","adsMux","adsRef","adsBiasOn","adsLoffOn"].forEach(id => {
   const el = $(id);
   if (el) el.addEventListener("change", updateAdsChannelPreview);
 });
+$("adsChannels")?.addEventListener("change", syncChannelsTextToTable);
 
 $("plotChannelSpacing")?.addEventListener("input", e => {
   setText("plotChannelSpacingLabel", Number(e.target.value).toFixed(2));
