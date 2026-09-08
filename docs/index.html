@@ -906,10 +906,6 @@
       </div>
       <div class="row">
         <button id="adsRegBtn">Read Regs</button>
-        <button id="adsTestOnBtn" class="soft">Test ON</button>
-      </div>
-      <div class="row">
-        <button id="adsTestOffBtn" class="strong">Test OFF</button>
         <button id="adsApplyConfigBtn">Apply Config</button>
       </div>
       <div class="sectionHeader">
@@ -970,7 +966,6 @@
         <label for="adsMux">MUX</label>
         <select id="adsMux">
           <option>NORMAL</option>
-          <option>TEST</option>
           <option>SHORTED</option>
           <option>BIAS_MEAS</option>
           <option>MVDD</option>
@@ -997,7 +992,6 @@
       <label class="check"><input id="adsLoffOn" type="checkbox">Lead-off</label>
       <label class="check"><input id="adsApplyChannelsOn" type="checkbox" checked>CH enable</label>
     </div>
-    <input id="adsTestOn" type="checkbox" class="hidden" aria-hidden="true">
     <button id="adsApplyChannelsBtn">Apply Channels</button>
     <h2>채널별 설정</h2>
     <div class="adsTableWrap">
@@ -1240,6 +1234,9 @@ const state = {
   recordStartedAt: null,
   recordStoppedAt: null,
   lastRecordingUiAt: 0,
+  recordFirstTime: NaN,
+  recordLastTime: NaN,
+  recordTimedSamples: 0,
   demoLoaded: false,
   labelRows: [],
   labelHeaders: [],
@@ -1260,7 +1257,7 @@ const state = {
 const adsRegisters = [
   { addr: 0x00, name: "ID", role: "Device ID 확인" },
   { addr: 0x01, name: "CONFIG1", role: "Daisy-chain, clock, SPS" },
-  { addr: 0x02, name: "CONFIG2", role: "내부 test signal 설정" },
+  { addr: 0x02, name: "CONFIG2", role: "캘리브레이션 신호 상태" },
   { addr: 0x03, name: "CONFIG3", role: "Reference buffer, BIAS 설정" },
   { addr: 0x04, name: "LOFF", role: "Lead-off 전류/검출 조건" },
   { addr: 0x05, name: "CH1SET", role: "CH1 power/gain/mux" },
@@ -1346,7 +1343,7 @@ function config1PreviewValue() {
 }
 
 function config2PreviewValue() {
-  return $("adsTestOn")?.checked ? 0xD0 : 0xC0;
+  return 0xC0;
 }
 
 function config3PreviewValue() {
@@ -1361,7 +1358,7 @@ function renderAdsChannelConfig() {
   const body = $("adsChannelConfig");
   if (!body) return;
   const gains = ["24", "12", "8", "6", "4", "2", "1"];
-  const muxes = ["NORMAL", "SHORTED", "TEST", "BIAS_MEAS", "MVDD", "TEMP", "BIAS_DRP", "BIAS_DRN"];
+  const muxes = ["NORMAL", "SHORTED", "BIAS_MEAS", "MVDD", "TEMP", "BIAS_DRP", "BIAS_DRN"];
   body.innerHTML = Array.from({ length: 8 }, (_, i) => {
     const ch = i + 1;
     return `
@@ -1429,7 +1426,8 @@ function biasMask(selector) {
 
 function copyGlobalAdsSettingsToChannels() {
   const gain = $("adsGain").value;
-  const mux = $("adsMux").value;
+  const mux = $("adsMux").value === "TEST" ? "NORMAL" : $("adsMux").value;
+  $("adsMux").value = mux;
   const enabledSet = new Set(String($("adsChannels").value).split(",").map(v => Number(v.trim())).filter(v => v >= 1 && v <= 8));
   adsChannelRows().forEach(row => {
     const ch = Number(row.dataset.adsCh);
@@ -1454,12 +1452,6 @@ function setAllAdsChannelsEnabled(enabled) {
   });
   $("adsChannels").value = enabled ? "1,2,3,4,5,6,7,8" : "";
   updateAdsChannelPreview();
-}
-
-function setAdsTestMode(enabled) {
-  $("adsMux").value = enabled ? "TEST" : "NORMAL";
-  $("adsTestOn").checked = Boolean(enabled);
-  copyGlobalAdsSettingsToChannels();
 }
 
 function adsChannelTableCommands() {
@@ -1514,7 +1506,7 @@ function adsReadConfigAndChannelCommands() {
 }
 
 function currentPlotTargetLabel() {
-  return $("adsTestOn").checked || $("adsMux").value === "TEST" ? "내부 Test Signal" : "전극 입력";
+  return $("adsMux").value === "SHORTED" ? "Input Short" : "전극 입력";
 }
 
 async function applyAdsMode(name, configure) {
@@ -1523,7 +1515,7 @@ async function applyAdsMode(name, configure) {
   resetLiveStream(`${name} 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.`);
   await sendAds1299Commands(adsFullConfigCommands());
   syncPlotSelectionToAdsChannels();
-  status(`${name} 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 현재 설정으로 새 plot을 시작합니다.\nCONFIG2가 0xC0이면 Test OFF, 0xD0이면 Test ON입니다.`);
+  status(`${name} 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 전극 입력으로 새 plot을 시작합니다.`);
 }
 
 function enabledAdsChannelsFromTable() {
@@ -1605,14 +1597,23 @@ function resetRecording() {
   state.recordStartedAt = null;
   state.recordStoppedAt = null;
   state.lastRecordingUiAt = 0;
+  state.recordFirstTime = NaN;
+  state.recordLastTime = NaN;
+  state.recordTimedSamples = 0;
   updateRecordingButtons();
+}
+
+function liveRecordingRate() {
+  const durationSec = (state.recordLastTime - state.recordFirstTime) * timeColumnScaleToSeconds(state.recordHeaders?.[0]);
+  const hz = state.recordTimedSamples > 1 && durationSec > 0 ? (state.recordTimedSamples - 1) / durationSec : NaN;
+  return Number.isFinite(hz) ? hz : NaN;
 }
 
 function updateRecordingButtons() {
   const start = $("recordStartBtn");
   const stop = $("recordStopBtn");
-  const rate = state.recording ? actualSavedRate(state.recordHeaders, state.recordRows) : null;
-  const rateText = rate && Number.isFinite(rate.hz) ? ` · ${rate.hz.toFixed(1)} Hz` : "";
+  const rate = state.recording ? liveRecordingRate() : NaN;
+  const rateText = Number.isFinite(rate) ? ` · ${rate.toFixed(1)} Hz` : "";
   if (start) {
     start.disabled = state.recording;
     start.classList.toggle("recording", state.recording);
@@ -1661,14 +1662,11 @@ function decodeChannelMux(value) {
 }
 
 function adsInputModeLabel() {
-  const config2 = adsRegisterValues[0x02];
   const selected = [...state.selected].filter(ch => /^ch\d+$/i.test(ch));
   const firstSelected = selected[0] || "ch1";
   const chIndex = Math.max(0, Math.min(7, Number(firstSelected.replace(/^ch/i, "")) - 1 || 0));
   const chSet = adsRegisterValues[0x05 + chIndex];
-  const globalTest = Number.isFinite(config2) && Boolean(bit(config2, 4));
   const chMux = decodeChannelMux(chSet);
-  if (globalTest || chMux === "TEST") return "내부 Test Signal";
   if (chMux === "NORMAL") return "전극 입력";
   if (chMux === "SHORTED") return "Input Short";
   return chMux;
@@ -3093,7 +3091,7 @@ function adsConfigCommand() {
     `REF=${$("adsRef").value}`,
     `BIAS=${$("adsBiasOn").checked ? "ON" : "OFF"}`,
     `LOFF=${$("adsLoffOn").checked ? "ON" : "OFF"}`,
-    `TEST=${$("adsTestOn").checked ? "ON" : "OFF"}`,
+    `TEST=OFF`,
     `MASK=${adsChannelMaskHex()}`
   ].join(" ");
 }
@@ -3119,7 +3117,6 @@ function setAdsControlsFromPreset(preset) {
   $("adsChannels").value = preset.channels || "1,2,3,4,5,6,7,8";
   $("adsBiasOn").checked = preset.bias !== false;
   $("adsLoffOn").checked = Boolean(preset.loff);
-  $("adsTestOn").checked = Boolean(preset.test);
   $("adsApplyChannelsOn").checked = true;
   copyGlobalAdsSettingsToChannels();
 }
@@ -3196,6 +3193,13 @@ function appendStreamLine(line, source) {
   if (state.recording) {
     if (!state.recordHeaders) state.recordHeaders = state.streamHeaders.slice();
     state.recordRows.push({ ...obj });
+    const timeCol = state.recordHeaders?.[0];
+    const t = obj[timeCol];
+    if (Number.isFinite(t)) {
+      if (!Number.isFinite(state.recordFirstTime)) state.recordFirstTime = t;
+      state.recordLastTime = t;
+      state.recordTimedSamples++;
+    }
     if (now - state.lastRecordingUiAt >= 250) {
       state.lastRecordingUiAt = now;
       updateRecordingButtons();
@@ -3275,7 +3279,7 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     `# ads_channel_mask=${adsChannelMaskHex()}`,
     `# ads_bias=${$("adsBiasOn")?.checked ? "ON" : "OFF"}`,
     `# ads_lead_off=${$("adsLoffOn")?.checked ? "ON" : "OFF"}`,
-    `# ads_test=${$("adsTestOn")?.checked ? "ON" : "OFF"}`,
+    `# ads_test=OFF`,
     `# registers ${regs}`
   ];
 }
@@ -3300,6 +3304,9 @@ function startRecordingWindow() {
   state.recordStartedAt = new Date();
   state.recordStoppedAt = null;
   state.lastRecordingUiAt = performance.now();
+  state.recordFirstTime = NaN;
+  state.recordLastTime = NaN;
+  state.recordTimedSamples = 0;
   updateRecordingButtons();
   status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
 }
@@ -3378,7 +3385,10 @@ $("adsSpiProbeBtn").addEventListener("click", () => sendAds1299Command("ADS1299 
 $("adsInitBtn").addEventListener("click", () => {
   resetLiveStream("Init 중: 이전 plot과 stream 데이터를 초기화했습니다.");
   sendAds1299Command("ADS1299 INIT")
-    .then(() => applyAdsMode("Init 후 Test OFF", () => setAdsTestMode(false)))
+    .then(() => applyAdsMode("Init 후 전극 입력", () => {
+      $("adsMux").value = "NORMAL";
+      copyGlobalAdsSettingsToChannels();
+    }))
     .catch(err => status(String(err.stack || err)));
 });
 $("adsReadIdBtn").addEventListener("click", () => sendAds1299Command("ADS1299 RREG ID").catch(err => status(String(err.stack || err))));
@@ -3390,35 +3400,14 @@ $("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", 
 $("adsPresetBias").addEventListener("click", () => applyAdsPreset("BIAS Measure", { rate: 250, gain: 24, mux: "BIAS_MEAS", ref: "DIFFERENTIAL", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsStartBtn").addEventListener("click", () => {
   resetLiveStream("Start 중: 새 stream plot을 준비합니다.");
-  setAdsTestMode(false);
+  $("adsMux").value = "NORMAL";
+  copyGlobalAdsSettingsToChannels();
   rememberDesiredAdsChannels();
   sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"])
     .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`))
     .catch(err => status(String(err.stack || err)));
 });
 $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
-$("adsTestOnBtn").addEventListener("click", () => {
-  resetLiveStream("Test ON 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.");
-  setAdsTestMode(true);
-  rememberDesiredAdsChannels();
-  sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"])
-    .then(() => {
-      syncPlotSelectionToAdsChannels();
-      status(`Test ON 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`);
-    })
-    .catch(err => status(String(err.stack || err)));
-});
-$("adsTestOffBtn").addEventListener("click", () => {
-  resetLiveStream("Test OFF 적용 중: test stream을 멈추고 전극 입력 모드로 되돌립니다.");
-  setAdsTestMode(false);
-  rememberDesiredAdsChannels();
-  sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands()])
-    .then(() => {
-      syncPlotSelectionToAdsChannels();
-      status(`Test OFF 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 전극 입력으로 새 plot을 시작합니다.`);
-    })
-    .catch(err => status(String(err.stack || err)));
-});
 $("adsRegBtn").addEventListener("click", () => sendAds1299Commands(adsReadConfigAndChannelCommands()).catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {
   rememberDesiredAdsChannels();
@@ -3465,7 +3454,7 @@ document.querySelectorAll(".tab").forEach(btn => {
   if (el) el.addEventListener("change", analyze);
 });
 
-["adsRate","adsGain","adsMux","adsChannels","adsRef","adsBiasOn","adsLoffOn","adsTestOn"].forEach(id => {
+["adsRate","adsGain","adsMux","adsChannels","adsRef","adsBiasOn","adsLoffOn"].forEach(id => {
   const el = $(id);
   if (el) el.addEventListener("change", updateAdsChannelPreview);
 });

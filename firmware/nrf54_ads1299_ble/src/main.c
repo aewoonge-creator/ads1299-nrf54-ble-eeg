@@ -22,7 +22,10 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
-#define FW_VERSION            "2026-09-08-state-v1"
+#define FW_VERSION            "2026-09-08-measure-only-v1"
+#define ADS1299_CONFIG2_ADDR  0x02
+#define ADS1299_CH1SET_ADDR   0x05
+#define ADS1299_CH8SET_ADDR   0x0C
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -382,19 +385,9 @@ static void handle_ads1299_command(const char *command)
 	}
 	if (strcmp(command, "TST") == 0 ||
 	    strcmp(command, "ADS1299 TEST") == 0) {
-		ads_sample_rate_sps = 250;
-		ads_gain = 24;
-		ads_bias_enabled = true;
-		ads_lead_off_enabled = false;
-		ads_test_signal_enabled = true;
-		ads_enabled_channel_mask = 0xFF;
-		int err = apply_current_ads_config();
-
-		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
-		if (err == 0) {
-			send_ads_state("TEST");
-			send_stream_header();
-		}
+		ads_test_signal_enabled = false;
+		ble_send_line("ERR TEST_DISABLED\n");
+		send_ads_state("TEST_DISABLED");
 		return;
 	}
 	if (strcmp(command, "ADS1299 SPI LOOPBACK") == 0) {
@@ -569,6 +562,14 @@ static void handle_ads1299_command(const char *command)
 		char *end = NULL;
 		uint8_t reg = (uint8_t)strtoul(command + 13, &end, 0);
 		uint8_t value = (uint8_t)strtoul(end, NULL, 0);
+
+		if (reg == ADS1299_CONFIG2_ADDR) {
+			value &= (uint8_t)~BIT(4);
+		} else if (reg >= ADS1299_CH1SET_ADDR && reg <= ADS1299_CH8SET_ADDR &&
+			   (value & 0x07) == 0x05) {
+			value = (value & 0xF8);
+		}
+
 		int err = ads1299_write_register(reg, value);
 
 		ble_send_line(err == 0 ? "OK WREG\n" : "ERR WREG\n");
@@ -579,8 +580,7 @@ static void handle_ads1299_command(const char *command)
 		ads_gain = command_get_u32(command, "GAIN=", ads_gain);
 		ads_bias_enabled = command_has_token(command, "BIAS=ON");
 		ads_lead_off_enabled = command_has_token(command, "LOFF=ON");
-		ads_test_signal_enabled = command_has_token(command, "TEST=ON") ||
-			command_has_token(command, "MUX=TEST");
+		ads_test_signal_enabled = false;
 		ads_enabled_channel_mask = parse_channel_mask(command);
 
 		int err = apply_current_ads_config();
