@@ -44,6 +44,7 @@ LOG_MODULE_REGISTER(ads1299, LOG_LEVEL_INF);
 #define ADS1299_FRAME_BYTES (3 + ADS1299_CHANNEL_COUNT * 3)
 #define ADS1299_SPI_FREQUENCY_HZ 1000000U
 #define ADS1299_BITBANG_MODE 1
+#define ADS1299_BITBANG_DELAY_US 2
 #define ADS1299_SPI_BASE_OPERATION \
 	(SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB)
 
@@ -63,6 +64,7 @@ static const struct gpio_dt_spec start_gpio =
 
 static bool streaming;
 static bool spi_pins_configured;
+static bool bitbang_pins_configured;
 static bool data_pins_configured;
 static spi_operation_t current_spi_operation = ADS1299_SPI_BASE_OPERATION | SPI_MODE_CPHA;
 static K_MUTEX_DEFINE(spi_lock);
@@ -109,6 +111,7 @@ static int ads1299_configure_spi_pins(void)
 		return err;
 	}
 	spi_pins_configured = true;
+	bitbang_pins_configured = false;
 	return 0;
 }
 
@@ -542,6 +545,7 @@ int ads1299_miso_gpio_probe(char *response, size_t response_len)
 	k_sleep(K_MSEC(2));
 	pull_up = gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN);
 
+	bitbang_pins_configured = false;
 	spi_pins_configured = false;
 	ads1299_configure_spi_pins();
 
@@ -592,6 +596,7 @@ int ads1299_miso_cs_low_probe(char *response, size_t response_len)
 	pull_up = gpio_pin_get(gpio, ADS1299_MISO_PROBE_PIN);
 
 	gpio_pin_set_dt(&cs_gpio, 0);
+	bitbang_pins_configured = false;
 	spi_pins_configured = false;
 	ads1299_configure_spi_pins();
 
@@ -601,7 +606,7 @@ int ads1299_miso_cs_low_probe(char *response, size_t response_len)
 
 static void bitbang_delay(void)
 {
-	k_busy_wait(10);
+	k_busy_wait(ADS1299_BITBANG_DELAY_US);
 }
 
 static int bitbang_gpio_configure(const struct device *gpio)
@@ -610,6 +615,9 @@ static int bitbang_gpio_configure(const struct device *gpio)
 
 	if (!device_is_ready(gpio)) {
 		return -ENODEV;
+	}
+	if (bitbang_pins_configured) {
+		return 0;
 	}
 
 	err = gpio_pin_configure(gpio, ADS1299_BB_SCK_PIN, GPIO_OUTPUT_INACTIVE);
@@ -628,7 +636,14 @@ static int bitbang_gpio_configure(const struct device *gpio)
 	if (err) {
 		return err;
 	}
-	return gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT);
+	err = gpio_pin_configure(gpio, ADS1299_MISO_PROBE_PIN, GPIO_INPUT);
+	if (err) {
+		return err;
+	}
+
+	bitbang_pins_configured = true;
+	spi_pins_configured = false;
+	return 0;
 }
 
 static uint8_t bitbang_transfer_byte(const struct device *gpio, uint8_t tx, uint8_t mode)
@@ -680,8 +695,6 @@ static int bitbang_cmd(uint8_t command)
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
 	k_mutex_unlock(&spi_lock);
 
-	spi_pins_configured = false;
-	ads1299_configure_spi_pins();
 	return 0;
 }
 
@@ -711,8 +724,6 @@ static int bitbang_read_reg(uint8_t reg, uint8_t *value)
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
 	k_mutex_unlock(&spi_lock);
 
-	spi_pins_configured = false;
-	ads1299_configure_spi_pins();
 	return 0;
 }
 
@@ -738,8 +749,6 @@ static int bitbang_write_reg(uint8_t reg, uint8_t value)
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
 	k_mutex_unlock(&spi_lock);
 
-	spi_pins_configured = false;
-	ads1299_configure_spi_pins();
 	return 0;
 }
 
@@ -775,8 +784,6 @@ static int bitbang_read_id_mode(uint8_t mode, uint8_t *id)
 	bitbang_delay();
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
 
-	spi_pins_configured = false;
-	ads1299_configure_spi_pins();
 	return 0;
 }
 
