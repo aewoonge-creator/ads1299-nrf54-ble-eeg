@@ -3000,6 +3000,7 @@ async function connectBle() {
   state.adsDesiredChannels = null;
   updateConnectionCards();
   status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
+  sendAds1299Command("ADS1299 VERSION").catch(() => {});
 }
 
 async function sendAds1299Command(command) {
@@ -3161,7 +3162,7 @@ function appendStreamLine(line, source) {
     logOnly(`${source}\n${trimmed}`);
     return;
   }
-  if (/^(ACK|OK|ERR|REG|RX|PONG|READY)\b/i.test(trimmed)) {
+  if (/^(ACK|OK|ERR|REG|RX|PONG|READY|FW)\b/i.test(trimmed)) {
     updateAdsRegisterValueFromLine(line);
     status(`${source}\n${trimmed}`);
     return;
@@ -3374,7 +3375,7 @@ $("adsStartBtn").addEventListener("click", () => {
   resetLiveStream("Start 중: 새 stream plot을 준비합니다.");
   setAdsTestMode(false);
   rememberDesiredAdsChannels();
-  sendAds1299Commands([...adsFullConfigCommands(), "ADS1299 START"])
+  sendAds1299Commands(["ADS1299 STOP", ...adsFullConfigCommands(), "ADS1299 START"])
     .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`))
     .catch(err => status(String(err.stack || err)));
 });
@@ -3383,7 +3384,7 @@ $("adsTestOnBtn").addEventListener("click", () => {
   resetLiveStream("Test ON 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.");
   setAdsTestMode(true);
   rememberDesiredAdsChannels();
-  sendAds1299Commands([...adsFullConfigCommands(), "ADS1299 START"])
+  sendAds1299Commands(["ADS1299 STOP", ...adsFullConfigCommands(), "ADS1299 START"])
     .then(() => {
       syncPlotSelectionToAdsChannels();
       status(`Test ON 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\n선택 채널: ${[...state.selected].join(", ") || adsChannelMaskHex()}`);
@@ -3391,7 +3392,15 @@ $("adsTestOnBtn").addEventListener("click", () => {
     .catch(err => status(String(err.stack || err)));
 });
 $("adsTestOffBtn").addEventListener("click", () => {
-  applyAdsMode("Test OFF", () => setAdsTestMode(false)).catch(err => status(String(err.stack || err)));
+  resetLiveStream("Test OFF 적용 중: test stream을 멈추고 전극 입력 모드로 되돌립니다.");
+  setAdsTestMode(false);
+  rememberDesiredAdsChannels();
+  sendAds1299Commands(["ADS1299 STOP", ...adsFullConfigCommands()])
+    .then(() => {
+      syncPlotSelectionToAdsChannels();
+      status(`Test OFF 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 전극 입력으로 새 plot을 시작합니다.`);
+    })
+    .catch(err => status(String(err.stack || err)));
 });
 $("adsRegBtn").addEventListener("click", () => sendAds1299Commands(adsReadConfigAndChannelCommands()).catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {

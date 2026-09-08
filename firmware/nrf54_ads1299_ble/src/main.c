@@ -22,6 +22,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
+#define FW_VERSION            "2026-09-08-state-v1"
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -165,6 +166,18 @@ static void send_stream_sample(const struct ads1299_sample *sample)
 	if (used < sizeof(line)) {
 		snprintk(line + used, sizeof(line) - used, "\n");
 	}
+	ble_send_line(line);
+}
+
+static void send_ads_state(const char *prefix)
+{
+	char line[96];
+
+	snprintk(line, sizeof(line), "FW STATE %s RATE=%u TEST=%s MASK=0x%02X\n",
+		 prefix,
+		 ads_sample_rate_sps,
+		 ads_test_signal_enabled ? "ON" : "OFF",
+		 ads_enabled_channel_mask);
 	ble_send_line(line);
 }
 
@@ -314,6 +327,14 @@ static void handle_ads1299_command(const char *command)
 		ble_send_line("PONG\n");
 		return;
 	}
+	if (strcmp(command, "ADS1299 VERSION") == 0) {
+		char response[80];
+
+		snprintk(response, sizeof(response), "FW VERSION %s\n", FW_VERSION);
+		ble_send_line(response);
+		send_ads_state("VERSION");
+		return;
+	}
 
 	if (strcmp(command, "ADS1299 INIT") == 0) {
 		int err = ads1299_init_device();
@@ -325,6 +346,7 @@ static void handle_ads1299_command(const char *command)
 			ads_test_signal_enabled = false;
 			ads_enabled_channel_mask = 0xFF;
 			ble_send_line("OK INIT\n");
+			send_ads_state("INIT");
 			send_stream_header();
 		} else {
 			char response[32];
@@ -338,6 +360,7 @@ static void handle_ads1299_command(const char *command)
 		int err = ads1299_start_stream();
 		ble_send_line(err == 0 ? "OK START\n" : "ERR START\n");
 		if (err == 0) {
+			send_ads_state("START");
 			send_stream_header();
 		}
 		return;
@@ -345,6 +368,9 @@ static void handle_ads1299_command(const char *command)
 	if (strcmp(command, "ADS1299 STOP") == 0) {
 		int err = ads1299_stop_stream();
 		ble_send_line(err == 0 ? "OK STOP\n" : "ERR STOP\n");
+		if (err == 0) {
+			send_ads_state("STOP");
+		}
 		return;
 	}
 	if (strcmp(command, "TST") == 0 ||
@@ -359,6 +385,7 @@ static void handle_ads1299_command(const char *command)
 
 		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
 		if (err == 0) {
+			send_ads_state("TEST");
 			send_stream_header();
 		}
 		return;
@@ -552,6 +579,7 @@ static void handle_ads1299_command(const char *command)
 		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CONFIG\n" : "ERR CONFIG\n");
 		if (err == 0) {
+			send_ads_state("CONFIG");
 			send_stream_header();
 		}
 		return;
@@ -561,6 +589,7 @@ static void handle_ads1299_command(const char *command)
 		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CHANNELS\n" : "ERR CHANNELS\n");
 		if (err == 0) {
+			send_ads_state("CHANNELS");
 			send_stream_header();
 		}
 		return;
@@ -568,6 +597,7 @@ static void handle_ads1299_command(const char *command)
 	if (strncmp(command, "ADS1299 STREAM MASK", 19) == 0) {
 		ads_enabled_channel_mask = parse_channel_mask(command);
 		ble_send_line("OK STREAM MASK\n");
+		send_ads_state("STREAM_MASK");
 		send_stream_header();
 		return;
 	}
@@ -639,7 +669,8 @@ int main(void)
 	}
 
 	LOG_INF("ADS1299 nRF54 BLE started");
-	ble_send_line("READY ADS1299 RTT/BLE\n");
+	ble_send_line("READY ADS1299 RTT/BLE FW " FW_VERSION "\n");
+	send_ads_state("READY");
 
 	while (1) {
 		struct ads1299_sample sample;
