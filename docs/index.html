@@ -1042,7 +1042,6 @@
           <tr>
             <th>CH</th>
             <th>사용</th>
-            <th>Power down</th>
             <th>Gain</th>
             <th>MUX</th>
             <th>SRB2</th>
@@ -1420,7 +1419,6 @@ function renderAdsChannelConfig() {
       <tr data-ads-ch="${ch}">
         <td><strong>CH${ch}</strong></td>
         <td><input class="ads-ch-enable" type="checkbox" checked aria-label="CH${ch} enable"></td>
-        <td><input class="ads-ch-pd" type="checkbox" aria-label="CH${ch} power down"></td>
         <td><select class="ads-ch-gain" aria-label="CH${ch} gain">${selectHtml(gains, "24")}</select></td>
         <td><select class="ads-ch-mux" aria-label="CH${ch} mux">${selectHtml(muxes, "NORMAL")}</select></td>
         <td><input class="ads-ch-srb2" type="checkbox" aria-label="CH${ch} SRB2"></td>
@@ -1443,11 +1441,10 @@ function adsChannelRows() {
 
 function chSetValue(row) {
   const enabled = row.querySelector(".ads-ch-enable").checked;
-  const powerDown = row.querySelector(".ads-ch-pd").checked || !enabled;
   const gain = row.querySelector(".ads-ch-gain").value;
   const mux = row.querySelector(".ads-ch-mux").value;
   const srb2 = row.querySelector(".ads-ch-srb2")?.checked ? 0x08 : 0;
-  return (powerDown ? 0x80 : 0) | ((adsGainBits[gain] ?? 0b110) << 4) | srb2 | (adsMuxBits[mux] ?? 0);
+  return (enabled ? 0 : 0x80) | ((adsGainBits[gain] ?? 0b110) << 4) | srb2 | (adsMuxBits[mux] ?? 0);
 }
 
 function updateAdsChannelPreview(syncChannelsText = false) {
@@ -1491,7 +1488,6 @@ function copyGlobalAdsSettingsToChannels() {
   adsChannelRows().forEach(row => {
     const ch = Number(row.dataset.adsCh);
     row.querySelector(".ads-ch-enable").checked = enabledSet.has(ch);
-    row.querySelector(".ads-ch-pd").checked = !enabledSet.has(ch);
     row.querySelector(".ads-ch-gain").value = gain;
     row.querySelector(".ads-ch-mux").value = adsMuxBits[mux] === undefined ? "NORMAL" : mux;
     row.querySelector(".ads-ch-srb2").checked = $("adsRef").value === "SRB2";
@@ -1513,7 +1509,6 @@ function syncChannelsTextToTable() {
   adsChannelRows().forEach(row => {
     const ch = Number(row.dataset.adsCh);
     row.querySelector(".ads-ch-enable").checked = enabledSet.has(ch);
-    row.querySelector(".ads-ch-pd").checked = !enabledSet.has(ch);
   });
   updateAdsChannelPreview();
 }
@@ -1521,7 +1516,6 @@ function syncChannelsTextToTable() {
 function setAllAdsChannelsEnabled(enabled) {
   adsChannelRows().forEach(row => {
     row.querySelector(".ads-ch-enable").checked = enabled;
-    row.querySelector(".ads-ch-pd").checked = !enabled;
   });
   $("adsChannels").value = enabled ? "1,2,3,4,5,6,7,8" : "";
   updateAdsChannelPreview();
@@ -1601,7 +1595,7 @@ async function applyAdsMode(name, configure) {
 
 function enabledAdsChannelsFromTable() {
   return adsChannelRows()
-    .filter(row => row.querySelector(".ads-ch-enable").checked && !row.querySelector(".ads-ch-pd").checked)
+    .filter(row => row.querySelector(".ads-ch-enable").checked)
     .map(row => Number(row.dataset.adsCh))
     .filter(ch => ch >= 1 && ch <= 8);
 }
