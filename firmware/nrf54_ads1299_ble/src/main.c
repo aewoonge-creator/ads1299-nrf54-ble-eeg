@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_SERVICE_UUID_VAL BT_UUID_128_ENCODE(0x6e400001, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
+#define COMMAND_QUEUE_DEPTH   32
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -32,7 +33,10 @@ static char rx_line[160];
 static size_t rx_len;
 static char rtt_rx_line[160];
 static size_t rtt_rx_len;
-static char command_line[160];
+static char command_queue[COMMAND_QUEUE_DEPTH][160];
+static uint8_t command_queue_head;
+static uint8_t command_queue_tail;
+static uint8_t command_queue_count;
 static uint32_t ads_sample_rate_sps = 250;
 static uint32_t ads_gain = 24;
 static bool ads_bias_enabled = true;
@@ -277,15 +281,26 @@ static void ble_send_line(const char *line)
 static void submit_command(const char *command)
 {
 	char ack[180];
+	bool queued = false;
 
 	snprintk(ack, sizeof(ack), "ACK %s\n", command);
 	ble_send_line(ack);
 
 	k_mutex_lock(&command_lock, K_FOREVER);
-	strncpy(command_line, command, sizeof(command_line) - 1);
-	command_line[sizeof(command_line) - 1] = '\0';
+	if (command_queue_count < COMMAND_QUEUE_DEPTH) {
+		strncpy(command_queue[command_queue_tail], command,
+			sizeof(command_queue[command_queue_tail]) - 1);
+		command_queue[command_queue_tail][sizeof(command_queue[command_queue_tail]) - 1] = '\0';
+		command_queue_tail = (command_queue_tail + 1) % COMMAND_QUEUE_DEPTH;
+		command_queue_count++;
+		queued = true;
+	}
 	k_mutex_unlock(&command_lock);
-	k_work_submit(&command_work);
+	if (queued) {
+		k_work_submit(&command_work);
+	} else {
+		ble_send_line("ERR COMMAND_QUEUE_FULL\n");
+	}
 }
 
 static void handle_ads1299_command(const char *command)
@@ -566,12 +581,20 @@ static void command_work_handler(struct k_work *work)
 
 	ARG_UNUSED(work);
 
-	k_mutex_lock(&command_lock, K_FOREVER);
-	strncpy(command, command_line, sizeof(command) - 1);
-	command[sizeof(command) - 1] = '\0';
-	k_mutex_unlock(&command_lock);
+	while (true) {
+		k_mutex_lock(&command_lock, K_FOREVER);
+		if (command_queue_count == 0) {
+			k_mutex_unlock(&command_lock);
+			break;
+		}
+		strncpy(command, command_queue[command_queue_head], sizeof(command) - 1);
+		command[sizeof(command) - 1] = '\0';
+		command_queue_head = (command_queue_head + 1) % COMMAND_QUEUE_DEPTH;
+		command_queue_count--;
+		k_mutex_unlock(&command_lock);
 
-	handle_ads1299_command(command);
+		handle_ads1299_command(command);
+	}
 }
 
 static void poll_rtt_commands(void)
