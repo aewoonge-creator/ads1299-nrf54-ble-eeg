@@ -1172,6 +1172,11 @@
       <input id="plotChannelSpacing" type="range" min="0.15" max="0.46" step="0.01" value="0.32">
       <span id="plotChannelSpacingLabel">0.32</span>
     </div>
+    <label for="liveWindowSec">Live 표시 s</label>
+    <div class="rangeLine">
+      <input id="liveWindowSec" type="range" min="1" max="20" step="1" value="4">
+      <span id="liveWindowSecLabel">4s</span>
+    </div>
 
     <h2>분석</h2>
     <label for="maxFreqInput">스펙트럼 최대 Hz</label>
@@ -1336,7 +1341,7 @@ const adsGainBits = { "1": 0b000, "2": 0b001, "4": 0b010, "6": 0b011, "8": 0b100
 const adsMuxBits = { NORMAL: 0b000, SHORTED: 0b001, BIAS_MEAS: 0b010, MVDD: 0b011, TEMP: 0b100, TEST: 0b101, BIAS_DRP: 0b110, BIAS_DRN: 0b111 };
 const adsRateBits = { 16000: 0b000, 8000: 0b001, 4000: 0b010, 2000: 0b011, 1000: 0b100, 500: 0b101, 250: 0b110 };
 const adsRateByBits = { 0: 16000, 1: 8000, 2: 4000, 3: 2000, 4: 1000, 5: 500, 6: 250 };
-const LIVE_PLOT_MAX_ROWS = 2500;
+const LIVE_PLOT_MAX_ROWS = 5000;
 
 const bands = {
   Delta: [1, 4],
@@ -2061,7 +2066,7 @@ function loadDataset(headers, rows, name, options = {}) {
 }
 
 function refreshLivePlot(source) {
-  const rows = state.streamRows.slice(-LIVE_PLOT_MAX_ROWS);
+  const rows = state.streamRows.slice(-livePlotRows());
   const headers = state.streamHeaders || [];
   const previousSelected = new Set(state.selected || []);
   const previousChannelsKey = state.channels.join(",");
@@ -2128,6 +2133,12 @@ function fillSelectIfChanged(select, values, selected, labeler = v => v) {
 
 function needsFullLiveAnalysis() {
   return ["bands", "fft", "psd", "compare"].includes(state.view);
+}
+
+function livePlotRows() {
+  const fs = Math.max(1, Number($("fsInput")?.value) || Number($("adsRate")?.value) || 250);
+  const seconds = Math.max(1, Number($("liveWindowSec")?.value) || 4);
+  return Math.min(LIVE_PLOT_MAX_ROWS, Math.max(2, Math.round(fs * seconds)));
 }
 
 function sliceRows() {
@@ -2688,7 +2699,8 @@ function drawAxes(ctx, x, y, w, h) {
 
 function drawSignals(ctx, w, h, a, series) {
   $("plotTitle").textContent = state.view === "raw" ? "Raw EEG" : "Filtered EEG";
-  $("plotSub").textContent = `${state.sourceName} · ${adsInputModeLabel()} · ${a.selected.join(", ")}`;
+  const liveText = state.streamHeaders ? ` · 최근 ${$("liveWindowSec")?.value || 4}s 표시` : "";
+  $("plotSub").textContent = `${state.sourceName} · ${adsInputModeLabel()} · ${a.selected.join(", ")}${liveText}`;
   const pad = { l: 82, r: 20, t: 28, b: 36 };
   const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
   drawAxes(ctx, pad.l, pad.t, pw, ph);
@@ -3624,6 +3636,10 @@ document.querySelectorAll(".tab").forEach(btn => {
 $("plotChannelSpacing")?.addEventListener("input", e => {
   setText("plotChannelSpacingLabel", Number(e.target.value).toFixed(2));
   draw();
+});
+$("liveWindowSec")?.addEventListener("input", e => {
+  setText("liveWindowSecLabel", `${Number(e.target.value).toFixed(0)}s`);
+  if (state.streamHeaders && state.streamRows.length) refreshLivePlot(state.sourceName || "BLE");
 });
 
 $("selectAll").addEventListener("click", () => {
