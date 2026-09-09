@@ -22,7 +22,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
-#define FW_VERSION            "2026-09-08-rate-sync-v2"
+#define FW_VERSION            "2026-09-09-gain-sync-v1"
 #define ADS1299_CONFIG2_ADDR  0x02
 #define ADS1299_CH1SET_ADDR   0x05
 #define ADS1299_CH8SET_ADDR   0x0C
@@ -198,9 +198,10 @@ static void send_ads_state(const char *prefix)
 {
 	char line[96];
 
-	snprintk(line, sizeof(line), "FW STATE %s RATE=%u TEST=%s MASK=0x%02X\n",
+	snprintk(line, sizeof(line), "FW STATE %s RATE=%u GAIN=%u TEST=%s MASK=0x%02X\n",
 		 prefix,
 		 ads_sample_rate_sps,
+		 ads_gain,
 		 ads_test_signal_enabled ? "ON" : "OFF",
 		 ads_enabled_channel_mask);
 	ble_send_line(line);

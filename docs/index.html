@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-08-rate-sync-v2">
+  <meta name="app-version" content="2026-09-09-gain-sync-v1">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1306,7 +1306,8 @@ const state = {
   lastMiniPlotAt: 0,
   adsDesiredChannels: null,
   adsAppliedRate: 250,
-  recordAdsRate: null,
+  adsAppliedGain: 24,
+  recordAdsSettings: null,
   eventLog: []
 };
 
@@ -1339,6 +1340,7 @@ const adsRegisters = [
 
 const adsRegisterValues = {};
 const adsGainBits = { "1": 0b000, "2": 0b001, "4": 0b010, "6": 0b011, "8": 0b100, "12": 0b101, "24": 0b110 };
+const adsGainByBits = { 0: 1, 1: 2, 2: 4, 3: 6, 4: 8, 5: 12, 6: 24 };
 const adsMuxBits = { NORMAL: 0b000, SHORTED: 0b001, BIAS_MEAS: 0b010, MVDD: 0b011, TEMP: 0b100, TEST: 0b101, BIAS_DRP: 0b110, BIAS_DRN: 0b111 };
 const adsRateBits = { 16000: 0b000, 8000: 0b001, 4000: 0b010, 2000: 0b011, 1000: 0b100, 500: 0b101, 250: 0b110 };
 const adsRateByBits = { 0: 16000, 1: 8000, 2: 4000, 3: 2000, 4: 1000, 5: 500, 6: 250 };
@@ -1682,7 +1684,7 @@ function resetRecording() {
   state.recordFirstTime = NaN;
   state.recordLastTime = NaN;
   state.recordTimedSamples = 0;
-  state.recordAdsRate = null;
+  state.recordAdsSettings = null;
   updateRecordingButtons();
 }
 
@@ -1800,14 +1802,20 @@ function rememberManualRegisterWrite(addrText, valueText) {
 
 function updateAdsRegisterValueFromLine(line) {
   const text = String(line).trim();
-  const stateLine = /^FW STATE\b.*\bRATE=(\d+)/i.exec(text);
-  if (stateLine) {
-    const rate = Number(stateLine[1]);
+  if (/^FW STATE\b/i.test(text)) {
+    const rateLine = /\bRATE=(\d+)/i.exec(text);
+    const gainLine = /\bGAIN=(\d+)/i.exec(text);
+    const rate = Number(rateLine?.[1]);
+    const gain = Number(gainLine?.[1]);
     if (Number.isFinite(rate) && rate > 0) {
       state.adsAppliedRate = rate;
       if ($("adsRate")) $("adsRate").value = String(rate);
-      updateAdsChannelPreview();
     }
+    if (Number.isFinite(gain) && gain > 0) {
+      state.adsAppliedGain = gain;
+      if ($("adsGain")) $("adsGain").value = String(gain);
+    }
+    updateAdsChannelPreview();
   }
   if (!/^REG\b/i.test(text)) return;
   const idLine = /^REG\s+ID\s+(?:0x)?([0-9a-f]{1,2})/i.exec(text);
@@ -3421,13 +3429,13 @@ function appendStreamLine(line, source) {
   }
 }
 
-function downloadRowsCsv({ headers, rows, withMeta, prefix, adsRate }) {
+function downloadRowsCsv({ headers, rows, withMeta, prefix, adsSettings }) {
   if (!headers || !rows.length) {
     status("저장할 stream 데이터가 아직 없습니다.");
     return;
   }
   const rate = actualSavedRate(headers, rows);
-  const lines = withMeta ? [...adsMetadataLines(headers, rows, rate, { adsRate }), headers.join(",")] : [headers.join(",")];
+  const lines = withMeta ? [...adsMetadataLines(headers, rows, rate, { adsSettings }), headers.join(",")] : [headers.join(",")];
   rows.forEach(row => {
     lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
   });
@@ -3466,13 +3474,34 @@ function actualSavedRate(headers, rows) {
   return { timeCol, samples, durationSec, hz };
 }
 
+function adsSettingsSnapshot() {
+  const channelGains = adsChannelRows()
+    .map(row => `ch${row.dataset.adsCh}:${row.querySelector(".ads-ch-gain").value}`)
+    .join(" ");
+  const channelRegisters = adsChannelRows()
+    .map((row, idx) => `CH${idx + 1}SET=${hexByte(chSetValue(row))}`)
+    .join(" ");
+  return {
+    rate: state.adsAppliedRate || Number($("adsRate")?.value) || "",
+    gain: state.adsAppliedGain || Number($("adsGain")?.value) || "",
+    mux: $("adsMux")?.value || "",
+    reference: $("adsRef")?.value || "",
+    channelMask: adsChannelMaskHex(),
+    bias: $("adsBiasOn")?.checked ? "ON" : "OFF",
+    leadOff: $("adsLoffOn")?.checked ? "ON" : "OFF",
+    channelGains,
+    channelRegisters
+  };
+}
+
 function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows, rate = actualSavedRate(headers, rows), options = {}) {
   const regs = adsRegisters
     .map(reg => `${reg.name}=${Number.isFinite(adsRegisterValues[reg.addr]) ? hexByte(adsRegisterValues[reg.addr]) : "--"}`)
     .join(" ");
   const actualHz = Number.isFinite(rate.hz) ? rate.hz.toFixed(4) : "";
   const duration = Number.isFinite(rate.durationSec) ? rate.durationSec.toFixed(4) : "";
-  const configuredRate = options.adsRate || state.adsAppliedRate || Number($("adsRate")?.value) || "";
+  const settings = options.adsSettings || adsSettingsSnapshot();
+  const configuredRate = settings.rate || "";
   const configuredRateNum = Number(configuredRate);
   const rateDiff = Number.isFinite(rate.hz) && configuredRateNum > 0 ? Math.abs(rate.hz - configuredRateNum) : NaN;
   const rateMatch = Number.isFinite(rateDiff)
@@ -3488,13 +3517,15 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     `# rate_match_status=${rateMatch}`,
     `# saved_samples=${rows?.length || 0}`,
     `# saved_duration_s=${duration}`,
-    `# ads_gain=${$("adsGain")?.value || ""}`,
-    `# ads_mux=${$("adsMux")?.value || ""}`,
-    `# ads_reference=${$("adsRef")?.value || ""}`,
-    `# ads_channel_mask=${adsChannelMaskHex()}`,
-    `# ads_bias=${$("adsBiasOn")?.checked ? "ON" : "OFF"}`,
-    `# ads_lead_off=${$("adsLoffOn")?.checked ? "ON" : "OFF"}`,
+    `# ads_gain=${settings.gain}`,
+    `# ads_channel_gains=${settings.channelGains}`,
+    `# ads_mux=${settings.mux}`,
+    `# ads_reference=${settings.reference}`,
+    `# ads_channel_mask=${settings.channelMask}`,
+    `# ads_bias=${settings.bias}`,
+    `# ads_lead_off=${settings.leadOff}`,
     `# ads_test=OFF`,
+    `# channel_registers ${settings.channelRegisters}`,
     `# registers ${regs}`
   ];
 }
@@ -3505,7 +3536,7 @@ function downloadStreamCsvWithMeta() {
     rows: state.streamRows,
     withMeta: true,
     prefix: "ads1299_recent_with_config",
-    adsRate: state.adsAppliedRate
+    adsSettings: adsSettingsSnapshot()
   });
 }
 
@@ -3523,7 +3554,7 @@ function startRecordingWindow() {
   state.recordFirstTime = NaN;
   state.recordLastTime = NaN;
   state.recordTimedSamples = 0;
-  state.recordAdsRate = state.adsAppliedRate || Number($("adsRate")?.value) || 250;
+  state.recordAdsSettings = adsSettingsSnapshot();
   updateRecordingButtons();
   status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
 }
@@ -3541,7 +3572,7 @@ function stopRecordingWindow() {
     rows: state.recordRows,
     withMeta: true,
     prefix: "ads1299_recorded_window",
-    adsRate: state.recordAdsRate
+    adsSettings: state.recordAdsSettings
   });
 }
 

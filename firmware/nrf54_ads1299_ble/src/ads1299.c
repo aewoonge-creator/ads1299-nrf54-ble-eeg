@@ -264,14 +264,14 @@ static uint8_t data_rate_bits(uint16_t sps)
 static uint8_t gain_bits(uint8_t gain)
 {
 	switch (gain) {
-	case 1: return 0x01;
-	case 2: return 0x02;
-	case 4: return 0x04;
-	case 8: return 0x05;
-	case 12: return 0x06;
-	case 24: return 0x07;
-	case 6:
-	default: return 0x00;
+	case 1: return 0x00;
+	case 2: return 0x01;
+	case 4: return 0x02;
+	case 6: return 0x03;
+	case 8: return 0x04;
+	case 12: return 0x05;
+	case 24:
+	default: return 0x06;
 	}
 }
 
