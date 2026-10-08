@@ -543,6 +543,31 @@
       border-color: #b42318;
     }
 
+    .recordTimerBadge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 38px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff8f6;
+      color: #7a271a;
+      white-space: nowrap;
+    }
+
+    .recordTimerBadge span {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .recordTimerBadge strong {
+      min-width: 68px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
     .analysisBox {
       margin: 8px 12px 0;
       border: 1px solid var(--line);
@@ -884,6 +909,10 @@
       .plotActions button {
         flex: 1 1 0;
       }
+      .recordTimerBadge {
+        width: 100%;
+        justify-content: center;
+      }
     }
   </style>
 </head>
@@ -915,6 +944,8 @@
         <div class="statusCard"><strong>명령</strong><span id="cmdState">미연결</span></div>
         <div class="statusCard"><strong>수신 Hz</strong><span id="rxHz">0</span></div>
         <div class="statusCard"><strong>샘플</strong><span id="sampleCount">0</span></div>
+        <div class="statusCard"><strong>경과 시간</strong><span id="streamTimer">00:00.0</span></div>
+        <div class="statusCard"><strong>저장 시간</strong><span id="recordTimer">00:00.0</span></div>
       </div>
       <div class="row">
         <button id="serialBtn" class="primary">USB Serial</button>
@@ -1215,6 +1246,10 @@
             <span id="plotSub">파일을 올리면 CSV 컬럼에서 EEG 채널을 자동 탐지합니다.</span>
           </div>
           <div class="plotActions" aria-label="CSV 저장">
+            <div class="recordTimerBadge" aria-label="저장 타이머">
+              <span>REC</span>
+              <strong id="recordTimerBadge">00:00.0</strong>
+            </div>
             <button id="recordStartBtn" class="soft">저장 시작</button>
             <button id="recordStopBtn" class="primary" disabled>저장 멈춤</button>
             <button id="csvMetaDownloadBtn">최근 CSV+설정</button>
@@ -1300,6 +1335,7 @@ const state = {
   bleRxCharacteristic: null,
   bleTxCharacteristic: null,
   streamStartedAt: 0,
+  streamStoppedAt: 0,
   lastPacketAt: 0,
   lastUiUpdateAt: 0,
   lastLiveStatsAt: 0,
@@ -1632,6 +1668,8 @@ function resetLiveStream(reason = "") {
   state.streamHeaders = null;
   state.streamRows = [];
   state.streamSampleCount = 0;
+  state.streamStartedAt = 0;
+  state.streamStoppedAt = 0;
   state.lastStreamPlotAt = 0;
   state.lastUiUpdateAt = 0;
   state.lastLiveStatsAt = 0;
@@ -1647,6 +1685,7 @@ function resetLiveStream(reason = "") {
   renderLiveChannelStats();
   renderChannels();
   draw();
+  updateTimers();
   if (reason) status(reason);
 }
 
@@ -1694,6 +1733,34 @@ function liveRecordingRate() {
   return Number.isFinite(hz) ? hz : NaN;
 }
 
+function formatTimer(seconds) {
+  const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const minutes = Math.floor(safe / 60);
+  const secs = Math.floor(safe % 60);
+  const tenths = Math.floor((safe % 1) * 10);
+  return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${tenths}`;
+}
+
+function streamElapsedSeconds(now = performance.now()) {
+  if (!state.streamStartedAt) return 0;
+  const end = state.streamStoppedAt || now;
+  return (end - state.streamStartedAt) / 1000;
+}
+
+function recordElapsedSeconds(now = Date.now()) {
+  if (!state.recordStartedAt) return 0;
+  const end = state.recording ? now : (state.recordStoppedAt?.getTime?.() || state.recordStartedAt.getTime());
+  return (end - state.recordStartedAt.getTime()) / 1000;
+}
+
+function updateTimers() {
+  const streamText = formatTimer(streamElapsedSeconds());
+  const recordText = formatTimer(recordElapsedSeconds());
+  setText("streamTimer", streamText);
+  setText("recordTimer", recordText);
+  setText("recordTimerBadge", recordText);
+}
+
 function updateRecordingButtons() {
   const start = $("recordStartBtn");
   const stop = $("recordStopBtn");
@@ -1708,6 +1775,7 @@ function updateRecordingButtons() {
     stop.disabled = !state.recording;
     stop.textContent = "저장 멈춤";
   }
+  updateTimers();
 }
 
 function renderAdsRegisterMap() {
@@ -1861,6 +1929,7 @@ function updateConnectionCards() {
   setText("bleState", state.bleDevice?.gatt?.connected ? "연결됨" : "대기");
   setText("cmdState", state.bleRxCharacteristic ? "준비됨" : "미연결");
   setText("sampleCount", String(state.streamSampleCount || state.streamRows.length));
+  updateTimers();
   if (state.streamStartedAt && (state.streamSampleCount || state.streamRows.length) > 1) {
     const elapsed = Math.max((performance.now() - state.streamStartedAt) / 1000, 0.001);
     setText("rxHz", ((state.streamSampleCount || state.streamRows.length) / elapsed).toFixed(1));
@@ -3162,6 +3231,8 @@ async function connectSerial() {
   const port = await navigator.serial.requestPort();
   await port.open({ baudRate: Number($("baudRate").value) || 115200 });
   state.streamStartedAt = performance.now();
+  state.streamStoppedAt = 0;
+  updateTimers();
   status("USB Serial 연결됨. CSV header와 data line을 기다리는 중...");
   const decoder = new TextDecoderStream();
   port.readable.pipeTo(decoder.writable);
@@ -3204,6 +3275,7 @@ async function connectBle() {
   state.bleTxCharacteristic = ch;
   state.bleRxCharacteristic = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
   state.streamStartedAt = performance.now();
+  state.streamStoppedAt = 0;
   state.streamHeaders = null;
   state.streamRows = [];
   state.streamSampleCount = 0;
@@ -3379,17 +3451,23 @@ function appendStreamLine(line, source) {
     state.streamHeaders = null;
     state.streamRows = [];
     state.streamSampleCount = 0;
+    state.streamStartedAt = 0;
+    state.streamStoppedAt = 0;
     resetRecording();
   }
   if (!state.streamHeaders && allNumeric) {
     state.streamHeaders = ["t_us", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
     state.streamRows = [];
     state.streamSampleCount = 0;
+    state.streamStartedAt = now;
+    state.streamStoppedAt = 0;
     status(`${source}\nADS1299 numeric stream: ${state.streamHeaders.join(", ")}`);
   } else if (!state.streamHeaders || !allNumeric) {
     state.streamHeaders = cells;
     state.streamRows = [];
     state.streamSampleCount = 0;
+    state.streamStartedAt = now;
+    state.streamStoppedAt = 0;
     status(`${source}\nheader: ${cells.join(", ")}`);
     return;
   }
@@ -3651,10 +3729,21 @@ $("adsStartBtn").addEventListener("click", () => {
   forceElectrodeInputMode();
   rememberDesiredAdsChannels();
   sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"])
-    .then(() => status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nstream 채널: ${enabledAdsChannelsFromTable().map(ch => `ch${ch}`).join(", ") || "없음"}\nLive 채널 확인에서 P2P/RMS가 가장 크게 반응하는 채널을 보세요.`))
+    .then(() => {
+      state.streamStartedAt = performance.now();
+      state.streamStoppedAt = 0;
+      updateTimers();
+      status(`Start 전송됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nstream 채널: ${enabledAdsChannelsFromTable().map(ch => `ch${ch}`).join(", ") || "없음"}\nLive 채널 확인에서 P2P/RMS가 가장 크게 반응하는 채널을 보세요.`);
+    })
     .catch(err => status(String(err.stack || err)));
 });
-$("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP").catch(err => status(String(err.stack || err))));
+$("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP")
+  .then(() => {
+    state.streamStoppedAt = performance.now();
+    updateTimers();
+    status("Stop 전송됨\n경과 시간 타이머는 마지막 측정 시간으로 고정됩니다.");
+  })
+  .catch(err => status(String(err.stack || err))));
 $("adsRegBtn").addEventListener("click", () => sendAds1299Commands(adsReadConfigAndChannelCommands()).catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {
   rememberDesiredAdsChannels();
@@ -3760,6 +3849,10 @@ window.addEventListener("resize", draw);
 renderAdsChannelConfig();
 renderAdsRegisterMap();
 updateRecordingButtons();
+setInterval(() => {
+  updateTimers();
+  if (state.recording) updateRecordingButtons();
+}, 200);
 updateMetrics();
 renderPowerBars();
 draw();
