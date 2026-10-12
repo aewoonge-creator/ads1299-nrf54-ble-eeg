@@ -568,6 +568,16 @@
       text-align: right;
     }
 
+    .csvNameInput {
+      width: 180px;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      font-weight: 650;
+    }
+
     .analysisBox {
       margin: 8px 12px 0;
       border: 1px solid var(--line);
@@ -913,6 +923,9 @@
         width: 100%;
         justify-content: center;
       }
+      .csvNameInput {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -1246,6 +1259,7 @@
             <span id="plotSub">파일을 올리면 CSV 컬럼에서 EEG 채널을 자동 탐지합니다.</span>
           </div>
           <div class="plotActions" aria-label="CSV 저장">
+            <input id="recordFileName" class="csvNameInput" type="text" autocomplete="off" placeholder="CSV 이름">
             <div class="recordTimerBadge" aria-label="저장 타이머">
               <span>REC</span>
               <strong id="recordTimerBadge">00:00.0</strong>
@@ -1323,6 +1337,7 @@ const state = {
   recordFirstTime: NaN,
   recordLastTime: NaN,
   recordTimedSamples: 0,
+  recordFileName: "",
   demoLoaded: false,
   labelRows: [],
   labelHeaders: [],
@@ -1723,6 +1738,7 @@ function resetRecording() {
   state.recordFirstTime = NaN;
   state.recordLastTime = NaN;
   state.recordTimedSamples = 0;
+  state.recordFileName = "";
   state.recordAdsSettings = null;
   updateRecordingButtons();
 }
@@ -1764,6 +1780,7 @@ function updateTimers() {
 function updateRecordingButtons() {
   const start = $("recordStartBtn");
   const stop = $("recordStopBtn");
+  const name = $("recordFileName");
   const rate = state.recording ? liveRecordingRate() : NaN;
   const rateText = Number.isFinite(rate) ? ` · ${rate.toFixed(1)} Hz` : "";
   if (start) {
@@ -1774,6 +1791,10 @@ function updateRecordingButtons() {
   if (stop) {
     stop.disabled = !state.recording;
     stop.textContent = "저장 멈춤";
+  }
+  if (name) {
+    name.disabled = state.recording;
+    name.title = state.recording ? "저장 중에는 시작할 때 정한 CSV 이름을 사용합니다." : "비워두면 자동 이름으로 저장됩니다.";
   }
   updateTimers();
 }
@@ -3507,7 +3528,23 @@ function appendStreamLine(line, source) {
   }
 }
 
-function downloadRowsCsv({ headers, rows, withMeta, prefix, adsSettings }) {
+function sanitizeCsvFileName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+}
+
+function csvDownloadName({ prefix, fileName }) {
+  const cleanName = sanitizeCsvFileName(fileName);
+  if (cleanName) return cleanName.toLowerCase().endsWith(".csv") ? cleanName : `${cleanName}.csv`;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return `${prefix}_${stamp}.csv`;
+}
+
+function downloadRowsCsv({ headers, rows, withMeta, prefix, adsSettings, fileName }) {
   if (!headers || !rows.length) {
     status("저장할 stream 데이터가 아직 없습니다.");
     return;
@@ -3520,9 +3557,8 @@ function downloadRowsCsv({ headers, rows, withMeta, prefix, adsSettings }) {
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   link.href = url;
-  link.download = `${prefix}_${stamp}.csv`;
+  link.download = csvDownloadName({ prefix, fileName });
   link.click();
   URL.revokeObjectURL(url);
   const rateText = Number.isFinite(rate.hz) ? `\n실제 저장 Hz(${rate.timeCol} 기준): ${rate.hz.toFixed(2)} Hz` : "";
@@ -3614,7 +3650,8 @@ function downloadStreamCsvWithMeta() {
     rows: state.streamRows,
     withMeta: true,
     prefix: "ads1299_recent_with_config",
-    adsSettings: adsSettingsSnapshot()
+    adsSettings: adsSettingsSnapshot(),
+    fileName: $("recordFileName")?.value
   });
 }
 
@@ -3632,9 +3669,11 @@ function startRecordingWindow() {
   state.recordFirstTime = NaN;
   state.recordLastTime = NaN;
   state.recordTimedSamples = 0;
+  state.recordFileName = sanitizeCsvFileName($("recordFileName")?.value);
   state.recordAdsSettings = adsSettingsSnapshot();
   updateRecordingButtons();
-  status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
+  const nameText = state.recordFileName ? `\n저장 파일명: ${csvDownloadName({ prefix: "ads1299_recorded_window", fileName: state.recordFileName })}` : "\n저장 파일명: 자동 생성";
+  status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}${nameText}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
 }
 
 function stopRecordingWindow() {
@@ -3650,7 +3689,8 @@ function stopRecordingWindow() {
     rows: state.recordRows,
     withMeta: true,
     prefix: "ads1299_recorded_window",
-    adsSettings: state.recordAdsSettings
+    adsSettings: state.recordAdsSettings,
+    fileName: state.recordFileName
   });
 }
 
