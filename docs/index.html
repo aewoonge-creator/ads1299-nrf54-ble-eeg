@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-09-09-gain-sync-v1">
+  <meta name="app-version" content="2026-10-16-test-cal-v4">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1003,6 +1003,7 @@
         <button id="adsPresetTemp" class="soft">Temperature</button>
         <button id="adsPresetMvdd" class="soft">MVDD Check</button>
         <button id="adsPresetBias" class="soft">BIAS Measure</button>
+        <button id="adsPresetTest" class="soft">Internal TEST</button>
       </div>
       <div class="inlineLog">
         <div id="adsRegSummary" class="status compactStatus">CONFIG1/2/3은 Read Regs를 누르면 여기에 표시됩니다.</div>
@@ -1056,6 +1057,7 @@
           <option>BIAS_MEAS</option>
           <option>MVDD</option>
           <option>TEMP</option>
+          <option>TEST</option>
         </select>
       </div>
     </div>
@@ -1063,9 +1065,10 @@
       <div>
         <label for="adsRef">Reference</label>
         <select id="adsRef">
-          <option>SRB1</option>
-          <option>SRB2</option>
-          <option>DIFFERENTIAL</option>
+          <option value="SRB1">SRB1 common (INxN)</option>
+          <option value="SRB2_COMMON">SRB2 common (INxP)</option>
+          <option value="SRB2_TO_SRB1">Selected CH → SRB2 → SRB1</option>
+          <option value="DIFFERENTIAL">Differential</option>
         </select>
       </div>
       <div>
@@ -1073,11 +1076,67 @@
         <input id="adsChannels" type="text" value="1,2,3,4,5,6,7,8">
       </div>
     </div>
+    <div class="triple">
+      <div>
+        <label for="adsRefChannel">Reference source CH</label>
+        <select id="adsRefChannel">
+          <option>1</option><option>2</option><option>3</option><option>4</option>
+          <option>5</option><option>6</option><option>7</option><option>8</option>
+        </select>
+      </div>
+      <div>
+        <label for="adsAdcRef">ADC VREF</label>
+        <select id="adsAdcRef">
+          <option value="INTERNAL">Internal 4.5 V</option>
+          <option value="EXTERNAL">External</option>
+        </select>
+      </div>
+      <div>
+        <label for="adsVrefVolts">VREF voltage (V)</label>
+        <input id="adsVrefVolts" type="number" min="0.1" max="10" step="0.001" value="4.5">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="adsBiasRef">BIAS reference</label>
+        <select id="adsBiasRef">
+          <option value="INTERNAL">Internal midsupply</option>
+          <option value="EXTERNAL">External BIASREF</option>
+        </select>
+      </div>
+      <div class="note" id="adsRefHelp">SRB1은 모든 INxN을 SRB1에 연결합니다.</div>
+    </div>
     <div class="checks">
-      <label class="check"><input id="adsBiasOn" type="checkbox" checked>BIAS</label>
+      <label class="check"><input id="adsBiasOn" type="checkbox" checked>BIAS drive</label>
       <label class="check"><input id="adsLoffOn" type="checkbox">Lead-off</label>
       <label class="check"><input id="adsApplyChannelsOn" type="checkbox" checked>CH enable</label>
     </div>
+    <div class="triple">
+      <div>
+        <label for="adsTestAmp">TEST amplitude</label>
+        <select id="adsTestAmp"><option value="1X">1x VREF/2400</option><option value="2X">2x VREF/2400</option></select>
+      </div>
+      <div>
+        <label for="adsTestFreq">TEST frequency</label>
+        <select id="adsTestFreq"><option value="SLOW">fCLK / 2^21</option><option value="FAST">fCLK / 2^20</option><option value="DC">DC</option></select>
+      </div>
+      <div><button id="adsRunTestBtn" class="secondary">TEST 실행 + 자동 판정</button></div>
+    </div>
+    <div id="adsTestResult" class="status compactStatus">TEST 대기: 채널 표에서 TEST MUX 채널을 선택하세요.</div>
+    <div class="row">
+      <div>
+        <label for="adsOffsetSeconds">Input-short 보정 시간 (s)</label>
+        <input id="adsOffsetSeconds" type="number" min="1" max="30" step="1" value="3">
+      </div>
+      <div class="checks">
+        <label class="check"><input id="adsApplyOffset" type="checkbox">저장된 offset을 plot/CSV에 적용</label>
+      </div>
+    </div>
+    <div class="row">
+      <button id="adsOffsetCalBtn">Input-short offset 보정</button>
+      <button id="adsOffsetClearBtn">Offset 지우기</button>
+    </div>
+    <div id="adsOffsetResult" class="status compactStatus">아직 offset 보정을 실행하지 않았습니다.</div>
     <button id="adsApplyChannelsBtn">Apply Channels</button>
     <h2>채널별 설정</h2>
     <div class="adsTableWrap">
@@ -1314,6 +1373,7 @@
   </div>
 </main>
 
+<script src="./stream-recording.js"></script>
 <script>
 const state = {
   rows: [],
@@ -1333,11 +1393,16 @@ const state = {
   recordRows: [],
   recordStartedAt: null,
   recordStoppedAt: null,
+  recordLastElapsedMs: 0,
   lastRecordingUiAt: 0,
   recordFirstTime: NaN,
   recordLastTime: NaN,
   recordTimedSamples: 0,
   recordFileName: "",
+  recordPreviousFrame: null,
+  recordComparablePairs: 0,
+  recordRepeatedSamples: 0,
+  pendingCsvExports: 0,
   demoLoaded: false,
   labelRows: [],
   labelHeaders: [],
@@ -1358,6 +1423,11 @@ const state = {
   adsDesiredChannels: null,
   adsAppliedRate: 250,
   adsAppliedGain: 24,
+  testRows: [],
+  testDiagnostic: null,
+  channelOffsetsRaw: Array(8).fill(0),
+  offsetCalibration: null,
+  offsetApplied: false,
   recordAdsSettings: null,
   eventLog: []
 };
@@ -1443,7 +1513,8 @@ function maskFromSelector(selector) {
 }
 
 function referenceRegisterValue() {
-  return $("adsRef")?.value === "SRB1" ? 0x20 : 0x00;
+  const mode = $("adsRef")?.value;
+  return mode === "SRB1" || mode === "SRB2_TO_SRB1" ? 0x20 : 0x00;
 }
 
 function config1PreviewValue() {
@@ -1452,11 +1523,22 @@ function config1PreviewValue() {
 }
 
 function config2PreviewValue() {
-  return 0xC0;
+  const testEnabled = testChannelMask() !== 0;
+  const amplitude = $("adsTestAmp")?.value === "2X" ? 0x04 : 0;
+  const frequency = $("adsTestFreq")?.value === "FAST" ? 0x01 : ($("adsTestFreq")?.value === "DC" ? 0x03 : 0);
+  return 0xC0 | (testEnabled ? 0x10 : 0) | amplitude | frequency;
 }
 
 function config3PreviewValue() {
-  return $("adsBiasOn")?.checked ? 0xEC : 0xE0;
+  const biasMeasure = $("adsMux")?.value === "BIAS_MEAS" ||
+    adsChannelRows().some(row => row.querySelector(".ads-ch-enable")?.checked &&
+      row.querySelector(".ads-ch-mux")?.value === "BIAS_MEAS");
+  let value = 0x60;
+  if ($("adsAdcRef")?.value !== "EXTERNAL") value |= 0x80;
+  if (biasMeasure) value |= 0x10;
+  if ($("adsBiasRef")?.value !== "EXTERNAL") value |= 0x08;
+  if ($("adsBiasOn")?.checked) value |= 0x04;
+  return value;
 }
 
 function loffPreviewValue() {
@@ -1467,7 +1549,7 @@ function renderAdsChannelConfig() {
   const body = $("adsChannelConfig");
   if (!body) return;
   const gains = ["24", "12", "8", "6", "4", "2", "1"];
-  const muxes = ["NORMAL", "SHORTED", "BIAS_MEAS", "MVDD", "TEMP", "BIAS_DRP", "BIAS_DRN"];
+  const muxes = ["NORMAL", "SHORTED", "BIAS_MEAS", "MVDD", "TEMP", "TEST", "BIAS_DRP", "BIAS_DRN"];
   body.innerHTML = Array.from({ length: 8 }, (_, i) => {
     const ch = i + 1;
     return `
@@ -1499,7 +1581,9 @@ function chSetValue(row) {
   const gain = row.querySelector(".ads-ch-gain").value;
   const mux = row.querySelector(".ads-ch-mux").value;
   const srb2 = row.querySelector(".ads-ch-srb2")?.checked ? 0x08 : 0;
-  return (enabled ? 0 : 0x80) | ((adsGainBits[gain] ?? 0b110) << 4) | srb2 | (adsMuxBits[mux] ?? 0);
+  const gainValue = (adsGainBits[gain] ?? 0b110) << 4;
+  if (!enabled) return 0x80 | gainValue | adsMuxBits.SHORTED;
+  return gainValue | srb2 | (adsMuxBits[mux] ?? 0);
 }
 
 function updateAdsChannelPreview(syncChannelsText = false) {
@@ -1521,8 +1605,8 @@ function updateRegisterPreviewFromChannelTable() {
   adsRegisterValues[0x02] = config2PreviewValue();
   adsRegisterValues[0x03] = config3PreviewValue();
   adsRegisterValues[0x04] = loffPreviewValue();
-  adsRegisterValues[0x0D] = maskFromSelector(".ads-ch-biasp");
-  adsRegisterValues[0x0E] = maskFromSelector(".ads-ch-biasn");
+  adsRegisterValues[0x0D] = $("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasp") : 0;
+  adsRegisterValues[0x0E] = $("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasn") : 0;
   adsRegisterValues[0x0F] = maskFromSelector(".ads-ch-loffp");
   adsRegisterValues[0x10] = maskFromSelector(".ads-ch-loffn");
   adsRegisterValues[0x11] = maskFromSelector(".ads-ch-loffflip");
@@ -1535,24 +1619,75 @@ function biasMask(selector) {
   return maskFromSelector(selector);
 }
 
+function testChannelMask() {
+  return adsChannelRows().reduce((mask, row, idx) => {
+    const enabled = row.querySelector(".ads-ch-enable")?.checked;
+    const test = row.querySelector(".ads-ch-mux")?.value === "TEST";
+    return enabled && test ? mask | (1 << idx) : mask;
+  }, 0);
+}
+
 function copyGlobalAdsSettingsToChannels() {
   const gain = $("adsGain").value;
-  const mux = $("adsMux").value === "TEST" ? "NORMAL" : $("adsMux").value;
-  $("adsMux").value = mux;
+  const mux = $("adsMux").value;
   const enabledSet = channelsTextSet();
+  const referenceMode = $("adsRef").value;
+  const referenceChannel = Number($("adsRefChannel")?.value) || 1;
+  if (referenceMode === "SRB2_TO_SRB1") enabledSet.add(referenceChannel);
   adsChannelRows().forEach(row => {
     const ch = Number(row.dataset.adsCh);
     row.querySelector(".ads-ch-enable").checked = enabledSet.has(ch);
     row.querySelector(".ads-ch-gain").value = gain;
     row.querySelector(".ads-ch-mux").value = adsMuxBits[mux] === undefined ? "NORMAL" : mux;
-    row.querySelector(".ads-ch-srb2").checked = $("adsRef").value === "SRB2";
+    row.querySelector(".ads-ch-srb2").checked = referenceMode === "SRB2_COMMON" ||
+      (referenceMode === "SRB2_TO_SRB1" && ch === referenceChannel);
     row.querySelector(".ads-ch-biasp").checked = $("adsBiasOn").checked;
     row.querySelector(".ads-ch-biasn").checked = $("adsBiasOn").checked;
     row.querySelector(".ads-ch-loffp").checked = $("adsLoffOn").checked;
     row.querySelector(".ads-ch-loffn").checked = $("adsLoffOn").checked;
     row.querySelector(".ads-ch-loffflip").checked = false;
   });
+  $("adsChannels").value = [...enabledSet].sort((a, b) => a - b).join(",");
+  updateReferenceHelp();
   updateAdsChannelPreview();
+}
+
+function updateReferenceHelp() {
+  const mode = $("adsRef")?.value;
+  const ch = Number($("adsRefChannel")?.value) || 1;
+  const messages = {
+    SRB1: "SRB1은 모든 INxN을 SRB1에 연결합니다. 보드의 SRB1 전극 입력 경로가 실제로 배선되어 있어야 합니다.",
+    SRB2_COMMON: "SRB2 common은 사용 채널의 INxP를 SRB2 버스에 직접 묶습니다. 차동 EEG montage와 전극 연결을 먼저 확인하세요.",
+    SRB2_TO_SRB1: `CH${ch}의 IN${ch}P를 SRB2에 연결하고 SRB1을 모든 INxN에 연결합니다. 보드에서 SRB2↔SRB1 물리적 브리지/점퍼가 반드시 필요합니다.`,
+    DIFFERENTIAL: "Differential은 SRB1/SRB2 스위치를 모두 열고 각 채널 INxP/INxN 쌍을 사용합니다."
+  };
+  const biasWarning = $("adsBiasOn")?.checked
+    ? " BIAS drive는 BIASOUT→BIASINV 피드백 부품과 BIAS 전극 연결이 실제 보드에 있어야 동작합니다."
+    : "";
+  const adcWarning = $("adsAdcRef")?.value === "EXTERNAL"
+    ? " External ADC VREF를 선택하면 VREFP/VREFN에 안정된 외부 기준전압이 실제로 공급되어야 합니다."
+    : "";
+  setText("adsRefHelp", (messages[mode] || messages.DIFFERENTIAL) + biasWarning + adcWarning);
+}
+
+function syncReferenceModeToChannels() {
+  normalizeReferenceRouting();
+  updateReferenceHelp();
+  updateAdsChannelPreview();
+}
+
+function normalizeReferenceRouting() {
+  const mode = $("adsRef")?.value;
+  const referenceChannel = Number($("adsRefChannel")?.value) || 1;
+  adsChannelRows().forEach(row => {
+    const ch = Number(row.dataset.adsCh);
+    row.querySelector(".ads-ch-srb2").checked = mode === "SRB2_COMMON" ||
+      (mode === "SRB2_TO_SRB1" && ch === referenceChannel);
+    if (mode === "SRB2_TO_SRB1" && ch === referenceChannel) {
+      row.querySelector(".ads-ch-enable").checked = true;
+    }
+  });
+  $("adsChannels").value = enabledAdsChannelsFromTable().join(",");
 }
 
 function channelsTextSet() {
@@ -1585,10 +1720,13 @@ function forceElectrodeInputMode() {
 }
 
 function adsChannelTableCommands() {
+  normalizeReferenceRouting();
   updateAdsChannelPreview();
   const commands = adsChannelRows().map((row, idx) => `ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte(chSetValue(row))}`);
-  commands.push(`ADS1299 WREG 0x0D ${hexByte(maskFromSelector(".ads-ch-biasp"))}`);
-  commands.push(`ADS1299 WREG 0x0E ${hexByte(maskFromSelector(".ads-ch-biasn"))}`);
+  commands.unshift(`ADS1299 WREG 0x02 ${hexByte(config2PreviewValue())}`);
+  commands.push(`ADS1299 WREG 0x03 ${hexByte(config3PreviewValue())}`);
+  commands.push(`ADS1299 WREG 0x0D ${hexByte($("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasp") : 0)}`);
+  commands.push(`ADS1299 WREG 0x0E ${hexByte($("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasn") : 0)}`);
   commands.push(`ADS1299 WREG 0x0F ${hexByte(maskFromSelector(".ads-ch-loffp"))}`);
   commands.push(`ADS1299 WREG 0x10 ${hexByte(maskFromSelector(".ads-ch-loffn"))}`);
   commands.push(`ADS1299 WREG 0x11 ${hexByte(maskFromSelector(".ads-ch-loffflip"))}`);
@@ -1602,15 +1740,7 @@ function adsFullConfigCommands() {
   return [
     ...adsGlobalConfigCommands(),
     ...adsChannelTableCommands(),
-    "ADS1299 RREG ALL",
-    "ADS1299 RREG 0x05",
-    "ADS1299 RREG 0x06",
-    "ADS1299 RREG 0x07",
-    "ADS1299 RREG 0x08",
-    "ADS1299 RREG 0x09",
-    "ADS1299 RREG 0x0A",
-    "ADS1299 RREG 0x0B",
-    "ADS1299 RREG 0x0C"
+    "ADS1299 RREG ALL"
   ];
 }
 
@@ -1622,21 +1752,83 @@ function adsRuntimeConfigCommands() {
 }
 
 function adsReadConfigAndChannelCommands() {
-  return [
-    "ADS1299 RREG ALL",
-    "ADS1299 RREG 0x05",
-    "ADS1299 RREG 0x06",
-    "ADS1299 RREG 0x07",
-    "ADS1299 RREG 0x08",
-    "ADS1299 RREG 0x09",
-    "ADS1299 RREG 0x0A",
-    "ADS1299 RREG 0x0B",
-    "ADS1299 RREG 0x0C"
-  ];
+  return ["ADS1299 RREG ALL"];
 }
 
 function currentPlotTargetLabel() {
-  return $("adsMux").value === "SHORTED" ? "Input Short" : "전극 입력";
+  const mux = $("adsMux").value;
+  if (mux === "NORMAL") return "전극 입력";
+  if (mux === "SHORTED") return "Input Short";
+  if (mux === "BIAS_MEAS") return "BIAS output measurement";
+  return mux;
+}
+
+function expectedInternalTest({ amplitude = $("adsTestAmp")?.value || "1X", frequency = $("adsTestFreq")?.value || "SLOW" } = {}) {
+  const vref = Math.max(0.1, Math.min(10, Number($("adsVrefVolts")?.value) || 4.5));
+  const multiplier = amplitude === "2X" ? 2 : 1;
+  return {
+    uvPp: 2 * multiplier * vref * 1e6 / 2400,
+    hz: frequency === "DC" ? null : 2048000 / (frequency === "FAST" ? 2 ** 20 : 2 ** 21)
+  };
+}
+
+function median(values) {
+  if (!values.length) return NaN;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function analyzeInternalTestChannel(rows, channel, options = {}) {
+  const key = `ch${channel}`;
+  const points = rows.map(row => ({ t: Number(row.t_us), v: Number(row[key]) })).filter(point => Number.isFinite(point.t) && Number.isFinite(point.v));
+  if (points.length < 20) return null;
+  const values = points.map(point => point.v).sort((a, b) => a - b);
+  const tail = Math.max(2, Math.floor(values.length / 5));
+  const low = median(values.slice(0, tail));
+  const high = median(values.slice(-tail));
+  const expected = expectedInternalTest(options);
+  const frequency = options.frequency || $("adsTestFreq")?.value || "SLOW";
+  let measuredUv;
+  let measuredHz = null;
+  if (frequency === "DC") {
+    measuredUv = Math.abs(median(values)) * adsLsbMicrovolts(gainForChannel(key));
+  } else {
+    measuredUv = (high - low) * adsLsbMicrovolts(gainForChannel(key));
+    const threshold = (high + low) / 2;
+    const rising = [];
+    let previous = points[0].v >= threshold;
+    points.slice(1).forEach(point => {
+      const current = point.v >= threshold;
+      if (current && !previous) rising.push(point.t);
+      previous = current;
+    });
+    const periods = rising.slice(1).map((value, idx) => value - rising[idx]).filter(value => value > 0);
+    if (periods.length) measuredHz = 1e6 / median(periods);
+  }
+  const expectedUv = frequency === "DC" ? expected.uvPp / 2 : expected.uvPp;
+  const amplitudeError = Math.abs(measuredUv - expectedUv) / expectedUv;
+  const frequencyError = expected.hz && measuredHz ? Math.abs(measuredHz - expected.hz) / expected.hz : (expected.hz ? Infinity : 0);
+  return { channel, passed: amplitudeError <= 0.20 && frequencyError <= 0.10, measuredUv, expectedUv, measuredHz, expectedHz: expected.hz, amplitudeError, frequencyError };
+}
+
+function renderInternalTestResults() {
+  const diagnostic = state.testDiagnostic;
+  if (!diagnostic || !state.testRows.length) return;
+  const elapsed = (state.testRows.at(-1).t_us - state.testRows[0].t_us) / 1e6;
+  const required = diagnostic.frequency === "SLOW" ? 4 : 2;
+  if (elapsed < required) {
+    setText("adsTestResult", `TEST 측정 중 ${elapsed.toFixed(1)} / ${required} s`);
+    return;
+  }
+  const results = diagnostic.channels.map(channel => analyzeInternalTestChannel(state.testRows, channel, diagnostic)).filter(Boolean);
+  if (!results.length) return;
+  const lines = results.map(result => {
+    const hz = result.expectedHz == null ? "DC" : `${result.measuredHz?.toFixed(3) || "-"}/${result.expectedHz.toFixed(3)} Hz`;
+    return `CH${result.channel} ${result.passed ? "PASS" : "FAIL"}: ${result.measuredUv.toFixed(1)}/${result.expectedUv.toFixed(1)} µV${diagnostic.frequency === "DC" ? "" : "pp"}, ${hz}`;
+  });
+  setText("adsTestResult", lines.join(" | "));
+  state.testDiagnostic = null;
 }
 
 async function applyAdsMode(name, configure) {
@@ -1645,7 +1837,7 @@ async function applyAdsMode(name, configure) {
   resetLiveStream(`${name} 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.`);
   await sendAds1299Commands(adsFullConfigCommands());
   syncPlotSelectionToAdsChannels();
-  status(`${name} 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 전극 입력으로 새 plot을 시작합니다.`);
+  status(`${name} 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 현재 설정으로 새 plot을 시작합니다.`);
 }
 
 function enabledAdsChannelsFromTable() {
@@ -1680,6 +1872,7 @@ function syncPlotSelectionToAdsChannels() {
 }
 
 function resetLiveStream(reason = "") {
+  appendStreamText.buffer = "";
   state.streamHeaders = null;
   state.streamRows = [];
   state.streamSampleCount = 0;
@@ -1689,7 +1882,8 @@ function resetLiveStream(reason = "") {
   state.lastUiUpdateAt = 0;
   state.lastLiveStatsAt = 0;
   state.lastMiniPlotAt = 0;
-  resetRecording();
+  if (state.recording) stopRecordingWindow();
+  else resetRecording();
   state.rows = [];
   state.headers = [];
   state.channels = [];
@@ -1729,17 +1923,7 @@ function clearLoadedFile(reason = "파일 A를 내렸습니다.") {
 }
 
 function resetRecording() {
-  state.recording = false;
-  state.recordHeaders = null;
-  state.recordRows = [];
-  state.recordStartedAt = null;
-  state.recordStoppedAt = null;
-  state.lastRecordingUiAt = 0;
-  state.recordFirstTime = NaN;
-  state.recordLastTime = NaN;
-  state.recordTimedSamples = 0;
-  state.recordFileName = "";
-  state.recordAdsSettings = null;
+  StreamRecording.reset(state);
   updateRecordingButtons();
 }
 
@@ -1764,9 +1948,7 @@ function streamElapsedSeconds(now = performance.now()) {
 }
 
 function recordElapsedSeconds(now = Date.now()) {
-  if (!state.recordStartedAt) return 0;
-  const end = state.recording ? now : (state.recordStoppedAt?.getTime?.() || state.recordStartedAt.getTime());
-  return (end - state.recordStartedAt.getTime()) / 1000;
+  return StreamRecording.elapsedMilliseconds(state, now) / 1000;
 }
 
 function updateTimers() {
@@ -1848,7 +2030,7 @@ function adsInputModeLabel() {
 
 function decodeConfig3(value) {
   if (!Number.isFinite(value)) return "Read Regs 대기";
-  return `REFBUF ${bit(value, 7) ? "ON" : "OFF"}, BIAS ${bit(value, 2) ? "ON" : "OFF"}, BIASREF ${bit(value, 3) ? "internal" : "external"}`;
+  return `VREF ${bit(value, 7) ? "internal" : "external"}, BIAS_MEAS ${bit(value, 4) ? "ON" : "OFF"}, BIAS ${bit(value, 2) ? "ON" : "OFF"}, BIASREF ${bit(value, 3) ? "internal" : "external"}`;
 }
 
 function decodeLoff(value) {
@@ -1973,10 +2155,29 @@ function updateEegStatus() {
   const rms = Math.sqrt(values.reduce((a, b) => a + b * b, 0) / values.length);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  setText("eegDc", mean.toFixed(1));
-  setText("eegRms", rms.toFixed(1));
-  setText("eegP2p", (max - min).toFixed(1));
-  setText("eegRange", `${min.toFixed(0)} / ${max.toFixed(0)}`);
+  const adsRaw = /^ch\d+$/i.test(ch);
+  const metric = value => adsRaw ? `${value.toFixed(0)} raw / ${rawToMicrovolts(value, gainForChannel(ch)).toFixed(2)} µV` : value.toFixed(1);
+  setText("eegDc", metric(mean));
+  setText("eegRms", metric(rms));
+  setText("eegP2p", metric(max - min));
+  setText("eegRange", adsRaw
+    ? `${min.toFixed(0)} / ${max.toFixed(0)} raw (${rawToMicrovolts(min, gainForChannel(ch)).toFixed(2)} / ${rawToMicrovolts(max, gainForChannel(ch)).toFixed(2)} µV)`
+    : `${min.toFixed(0)} / ${max.toFixed(0)}`);
+}
+
+function gainForChannel(channelName) {
+  const channel = Number(String(channelName).replace(/^ch/i, ""));
+  const row = adsChannelRows().find(candidate => Number(candidate.dataset.adsCh) === channel);
+  return Math.max(1, Number(row?.querySelector(".ads-ch-gain")?.value) || Number($("adsGain")?.value) || 24);
+}
+
+function adsLsbMicrovolts(gain = Number($("adsGain")?.value) || 24) {
+  const vref = Math.max(0.1, Math.min(10, Number($("adsVrefVolts")?.value) || 4.5));
+  return vref * 1e6 / Math.max(1, Number(gain) || 24) / 8388607;
+}
+
+function rawToMicrovolts(raw, gain) {
+  return Number(raw) * adsLsbMicrovolts(gain);
 }
 
 function liveChannelStats(rows = state.streamRows, channels = state.streamHeaders?.filter(h => /^ch\d+$/i.test(h)) || []) {
@@ -2004,8 +2205,9 @@ function renderLiveChannelStats() {
   const maxP2p = finite.length ? Math.max(...finite.map(s => s.p2p)) : NaN;
   el.innerHTML = stats.map(s => {
     const hot = Number.isFinite(maxP2p) && s.p2p === maxP2p && maxP2p > 0;
-    const p2p = Number.isFinite(s.p2p) ? s.p2p.toFixed(0) : "-";
-    const rms = Number.isFinite(s.rms) ? s.rms.toFixed(0) : "-";
+    const gain = gainForChannel(s.ch);
+    const p2p = Number.isFinite(s.p2p) ? `${s.p2p.toFixed(0)} / ${rawToMicrovolts(s.p2p, gain).toFixed(2)} µV` : "-";
+    const rms = Number.isFinite(s.rms) ? `${s.rms.toFixed(0)} / ${rawToMicrovolts(s.rms, gain).toFixed(2)} µV` : "-";
     return `<div class="liveChip ${hot ? "hot" : ""}"><strong><span>${escapeHtml(s.ch)}</span><span>${hot ? "MAX" : ""}</span></strong>P2P ${p2p}<br>RMS ${rms}</div>`;
   }).join("");
 }
@@ -3114,7 +3316,7 @@ async function handleFile(file) {
   const text = await file.text();
   const parsed = parseCsv(text);
   if (!parsed.headers.length || !parsed.rows.length) {
-    status(`${file.name}\nCSV에서 헤더/샘플을 찾지 못했습니다. ADS1299 저장 CSV라면 t_ms,ch1 형식의 헤더가 필요합니다.`);
+    status(`${file.name}\nCSV에서 헤더/샘플을 찾지 못했습니다. ADS1299 저장 CSV라면 t_us,ch1 형식의 헤더가 필요합니다.`);
     return;
   }
   loadDataset(parsed.headers, parsed.rows, file.name);
@@ -3287,6 +3489,7 @@ async function connectBle() {
   const server = await device.gatt.connect();
   const svc = await server.getPrimaryService(service);
   const ch = await svc.getCharacteristic(characteristic);
+  appendStreamText.buffer = "";
   await ch.startNotifications();
   ch.addEventListener("characteristicvaluechanged", e => {
     const text = new TextDecoder().decode(e.target.value);
@@ -3301,6 +3504,8 @@ async function connectBle() {
   state.streamRows = [];
   state.streamSampleCount = 0;
   state.adsDesiredChannels = null;
+  if (state.recording) stopRecordingWindow();
+  else resetRecording();
   updateConnectionCards();
   status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
   sendAds1299Command("ADS1299 VERSION").catch(() => {});
@@ -3380,15 +3585,27 @@ async function sendAds1299Commands(commands) {
 }
 
 function adsConfigCommand() {
+  normalizeReferenceRouting();
+  const vrefVolts = Math.max(0.1, Math.min(10, Number($("adsVrefVolts")?.value) || 4.5));
+  const testMask = testChannelMask();
   return [
     "ADS1299 CONFIG",
     `RATE=${$("adsRate").value}`,
     `GAIN=${$("adsGain").value}`,
     `MUX=${$("adsMux").value}`,
     `REF=${$("adsRef").value}`,
+    `REF_CH=${$("adsRefChannel")?.value || 1}`,
+    `ADC_REF=${$("adsAdcRef")?.value || "INTERNAL"}`,
+    `VREF_MV=${Math.round(vrefVolts * 1000)}`,
     `BIAS=${$("adsBiasOn").checked ? "ON" : "OFF"}`,
+    `BIASREF=${$("adsBiasRef")?.value || "INTERNAL"}`,
+    `BIASP=${hexByte($("adsBiasOn").checked ? maskFromSelector(".ads-ch-biasp") : 0)}`,
+    `BIASN=${hexByte($("adsBiasOn").checked ? maskFromSelector(".ads-ch-biasn") : 0)}`,
     `LOFF=${$("adsLoffOn").checked ? "ON" : "OFF"}`,
-    `TEST=OFF`,
+    `TEST=${testMask ? "ON" : "OFF"}`,
+    `TEST_AMP=${$("adsTestAmp")?.value || "1X"}`,
+    `TEST_FREQ=${$("adsTestFreq")?.value || "SLOW"}`,
+    `TEST_MASK=${hexByte(testMask)}`,
     `MASK=${adsChannelMaskHex()}`
   ].join(" ");
 }
@@ -3399,11 +3616,7 @@ function adsChannelsCommand() {
 
 function adsGlobalConfigCommands() {
   updateAdsChannelPreview();
-  return [
-    adsConfigCommand(),
-    `ADS1299 WREG 0x15 ${hexByte(referenceRegisterValue())}`,
-    `ADS1299 WREG 0x17 ${hexByte($("adsLoffOn")?.checked ? 0x02 : 0x00)}`
-  ];
+  return [adsConfigCommand()];
 }
 
 function setAdsControlsFromPreset(preset) {
@@ -3411,11 +3624,87 @@ function setAdsControlsFromPreset(preset) {
   $("adsGain").value = String(preset.gain ?? 24);
   $("adsMux").value = preset.mux || "NORMAL";
   $("adsRef").value = preset.ref || "SRB1";
+  $("adsRefChannel").value = String(preset.refChannel || 1);
+  $("adsAdcRef").value = preset.adcRef || "INTERNAL";
+  $("adsVrefVolts").value = String(preset.vrefVolts || 4.5);
+  $("adsBiasRef").value = preset.biasRef || "INTERNAL";
+  $("adsTestAmp").value = preset.testAmp || "1X";
+  $("adsTestFreq").value = preset.testFreq || "SLOW";
   $("adsChannels").value = preset.channels || "1,2,3,4,5,6,7,8";
   $("adsBiasOn").checked = preset.bias !== false;
   $("adsLoffOn").checked = Boolean(preset.loff);
   $("adsApplyChannelsOn").checked = true;
   copyGlobalAdsSettingsToChannels();
+}
+
+function inputShortCalibrationCommands() {
+  const vrefVolts = Math.max(0.1, Math.min(10, Number($("adsVrefVolts")?.value) || 4.5));
+  const mask = adsChannelMaskHex();
+  const commands = [
+    `ADS1299 CONFIG RATE=${$("adsRate").value} GAIN=${$("adsGain").value} MUX=SHORTED REF=DIFFERENTIAL REF_CH=1 ADC_REF=${$("adsAdcRef")?.value || "INTERNAL"} VREF_MV=${Math.round(vrefVolts * 1000)} BIAS=OFF BIASREF=${$("adsBiasRef")?.value || "INTERNAL"} BIASP=0x00 BIASN=0x00 LOFF=OFF TEST=OFF TEST_AMP=1X TEST_FREQ=SLOW TEST_MASK=0x00 MASK=${mask}`
+  ];
+  adsChannelRows().forEach((row, idx) => {
+    const enabled = row.querySelector(".ads-ch-enable").checked;
+    const gain = (adsGainBits[row.querySelector(".ads-ch-gain").value] ?? 0b110) << 4;
+    commands.push(`ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte((enabled ? 0 : 0x80) | gain | adsMuxBits.SHORTED)}`);
+  });
+  commands.push("ADS1299 WREG 0x0D 0x00", "ADS1299 WREG 0x0E 0x00", `ADS1299 STREAM MASK=${mask}`);
+  return commands;
+}
+
+async function startInputShortOffsetCalibration() {
+  if (state.offsetCalibration) return;
+  state.testDiagnostic = null;
+  state.testRows = [];
+  const duration = Math.max(1, Math.min(30, Number($("adsOffsetSeconds")?.value) || 3));
+  const restoreCommands = adsRuntimeConfigCommands();
+  state.offsetCalibration = { duration, rows: [], restoreCommands, firstTimeUs: null };
+  resetLiveStream("Input-short offset 보정: 이전 stream 데이터를 초기화했습니다.");
+  setText("adsOffsetResult", `Input-short 측정 준비 중 (${duration} s)...`);
+  await sendAds1299Commands(["ADS1299 STOP", ...inputShortCalibrationCommands(), "ADS1299 START"]);
+}
+
+async function finishInputShortOffsetCalibration() {
+  const calibration = state.offsetCalibration;
+  if (!calibration) return;
+  state.offsetCalibration = null;
+  state.channelOffsetsRaw = Array.from({ length: 8 }, (_, index) => {
+    const values = calibration.rows.map(row => Number(row[`ch${index + 1}`])).filter(Number.isFinite);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  });
+  state.offsetApplied = true;
+  $("adsApplyOffset").checked = true;
+  const summary = state.channelOffsetsRaw.map((value, index) => `CH${index + 1} ${value.toFixed(1)}`).join(" | ");
+  setText("adsOffsetResult", `보정 완료 (${calibration.rows.length} samples): ${summary} raw`);
+  resetLiveStream("Input-short 보정 완료: 원래 측정 설정으로 복원합니다.");
+  await sendAds1299Commands(["ADS1299 STOP", ...calibration.restoreCommands, "ADS1299 START"]);
+}
+
+async function startInternalTestDiagnostic() {
+  if (state.offsetCalibration) throw new Error("Input-short offset 보정이 끝난 뒤 TEST를 실행하세요.");
+  let mask = testChannelMask();
+  if (!mask) {
+    adsChannelRows().forEach(row => {
+      if (row.querySelector(".ads-ch-enable").checked) row.querySelector(".ads-ch-mux").value = "TEST";
+    });
+    updateAdsChannelPreview();
+    mask = testChannelMask();
+  }
+  if (!mask) throw new Error("TEST를 실행할 활성 채널이 없습니다.");
+  $("adsBiasOn").checked = false;
+  $("adsLoffOn").checked = false;
+  $("adsRef").value = "DIFFERENTIAL";
+  normalizeReferenceRouting();
+  updateAdsChannelPreview();
+  state.testRows = [];
+  state.testDiagnostic = {
+    amplitude: $("adsTestAmp")?.value || "1X",
+    frequency: $("adsTestFreq")?.value || "SLOW",
+    channels: Array.from({ length: 8 }, (_, i) => i + 1).filter(channel => mask & (1 << (channel - 1)))
+  };
+  resetLiveStream("Internal TEST 준비: 이전 stream 데이터를 초기화했습니다.");
+  setText("adsTestResult", "TEST 설정 중...");
+  await sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"]);
 }
 
 function adsPresetCommands(preset) {
@@ -3474,7 +3763,8 @@ function appendStreamLine(line, source) {
     state.streamSampleCount = 0;
     state.streamStartedAt = 0;
     state.streamStoppedAt = 0;
-    resetRecording();
+    if (state.recording) stopRecordingWindow();
+    else resetRecording();
   }
   if (!state.streamHeaders && allNumeric) {
     state.streamHeaders = ["t_us", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
@@ -3494,18 +3784,32 @@ function appendStreamLine(line, source) {
   }
   const obj = {};
   state.streamHeaders.forEach((h, i) => obj[h] = Number.parseFloat(cells[i]));
+  const rawObj = { ...obj };
+  if (state.testDiagnostic) {
+    state.testRows.push(rawObj);
+    if (state.testRows.length > 100000) state.testRows.shift();
+    renderInternalTestResults();
+  }
+  if (state.offsetCalibration) {
+    const calibration = state.offsetCalibration;
+    if (calibration.firstTimeUs == null) calibration.firstTimeUs = rawObj.t_us;
+    calibration.rows.push(rawObj);
+    const elapsed = (rawObj.t_us - calibration.firstTimeUs) / 1e6;
+    setText("adsOffsetResult", `Input-short 측정 중 ${Math.max(0, elapsed).toFixed(1)} / ${calibration.duration.toFixed(1)} s`);
+    if (elapsed >= calibration.duration) {
+      finishInputShortOffsetCalibration().catch(error => status(String(error?.stack || error)));
+    }
+  }
+  if (state.offsetApplied && !state.offsetCalibration) {
+    for (let index = 0; index < 8; index++) {
+      const key = `ch${index + 1}`;
+      if (Number.isFinite(obj[key])) obj[key] -= state.channelOffsetsRaw[index] || 0;
+    }
+  }
   state.streamRows.push(obj);
   state.streamSampleCount++;
   if (state.recording) {
-    if (!state.recordHeaders) state.recordHeaders = state.streamHeaders.slice();
-    state.recordRows.push({ ...obj });
-    const timeCol = state.recordHeaders?.[0];
-    const t = obj[timeCol];
-    if (Number.isFinite(t)) {
-      if (!Number.isFinite(state.recordFirstTime)) state.recordFirstTime = t;
-      state.recordLastTime = t;
-      state.recordTimedSamples++;
-    }
+    StreamRecording.append(state, obj);
     if (now - state.lastRecordingUiAt >= 250) {
       state.lastRecordingUiAt = now;
       updateRecordingButtons();
@@ -3544,25 +3848,63 @@ function csvDownloadName({ prefix, fileName }) {
   return `${prefix}_${stamp}.csv`;
 }
 
-function downloadRowsCsv({ headers, rows, withMeta, prefix, adsSettings, fileName }) {
+function yieldToBrowser() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function downloadRowsCsv({ headers, rows, withMeta, prefix, adsSettings, fileName, repeatStats }) {
   if (!headers || !rows.length) {
     status("저장할 stream 데이터가 아직 없습니다.");
     return;
   }
+  await yieldToBrowser();
   const rate = actualSavedRate(headers, rows);
-  const lines = withMeta ? [...adsMetadataLines(headers, rows, rate, { adsSettings }), headers.join(",")] : [headers.join(",")];
-  rows.forEach(row => {
-    lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
-  });
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const quality = repeatStats || StreamRecording.exactRepeatStats(headers, rows);
+  const prefixLines = withMeta ? adsMetadataLines(headers, rows, rate, { adsSettings, repeatStats: quality }) : [];
+  const parts = ["\uFEFF", [...prefixLines, headers.join(",")].join("\n") + "\n"];
+  const chunkSize = 2048;
+  for (let offset = 0; offset < rows.length; offset += chunkSize) {
+    const end = Math.min(rows.length, offset + chunkSize);
+    const lines = [];
+    for (let i = offset; i < end; i++) {
+      const row = rows[i];
+      lines.push(headers.map(h => Number.isFinite(row[h]) ? row[h] : "").join(","));
+    }
+    parts.push(lines.join("\n") + "\n");
+    if ((offset / chunkSize) % 4 === 3) await yieldToBrowser();
+  }
+  const blob = new Blob(parts, { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = csvDownloadName({ prefix, fileName });
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
   const rateText = Number.isFinite(rate.hz) ? `\n실제 저장 Hz(${rate.timeCol} 기준): ${rate.hz.toFixed(2)} Hz` : "";
-  status(`CSV 저장됨: ${link.download}\n샘플 ${rows.length}개${rateText}`);
+  const repeatText = `\n직전과 8채널 동일: ${quality.repeatedSamples}/${quality.comparablePairs} (${quality.percent.toFixed(3)}%)`;
+  const activeText = state.recording ? "\n새 저장 세션은 계속 진행 중입니다." : "";
+  status(`CSV 저장됨: ${link.download}\n샘플 ${rows.length}개${rateText}${repeatText}${activeText}`);
+}
+
+let csvDownloadQueue = Promise.resolve();
+
+function enqueueRowsCsv(options) {
+  const job = {
+    ...options,
+    headers: options.headers?.slice() || null,
+    rows: options.detachedRows ? options.rows : (options.rows || []).slice()
+  };
+  state.pendingCsvExports++;
+  csvDownloadQueue = csvDownloadQueue.then(async () => {
+    try {
+      await downloadRowsCsv(job);
+    } catch (error) {
+      status(`CSV 저장 실패\n${String(error?.stack || error)}`);
+    } finally {
+      state.pendingCsvExports = Math.max(0, state.pendingCsvExports - 1);
+    }
+  });
+  return csvDownloadQueue;
 }
 
 function actualSavedRate(headers, rows) {
@@ -3600,9 +3942,22 @@ function adsSettingsSnapshot() {
     gain: state.adsAppliedGain || Number($("adsGain")?.value) || "",
     mux: $("adsMux")?.value || "",
     reference: $("adsRef")?.value || "",
+    referenceChannel: $("adsRefChannel")?.value || "",
+    adcReference: $("adsAdcRef")?.value || "",
+    vrefVolts: Number($("adsVrefVolts")?.value) || 4.5,
+    lsbMicrovolts: adsLsbMicrovolts(),
     channelMask: adsChannelMaskHex(),
     bias: $("adsBiasOn")?.checked ? "ON" : "OFF",
+    biasReference: $("adsBiasRef")?.value || "",
+    biasSensp: hexByte($("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasp") : 0),
+    biasSensn: hexByte($("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasn") : 0),
     leadOff: $("adsLoffOn")?.checked ? "ON" : "OFF",
+    test: testChannelMask() ? "ON" : "OFF",
+    testAmplitude: $("adsTestAmp")?.value || "1X",
+    testFrequency: $("adsTestFreq")?.value || "SLOW",
+    testMask: hexByte(testChannelMask()),
+    offsetApplied: state.offsetApplied ? "ON" : "OFF",
+    channelOffsetsRaw: state.channelOffsetsRaw.map((value, index) => `ch${index + 1}:${Number(value).toFixed(3)}`).join(" "),
     channelGains,
     channelRegisters
   };
@@ -3615,6 +3970,7 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
   const actualHz = Number.isFinite(rate.hz) ? rate.hz.toFixed(4) : "";
   const duration = Number.isFinite(rate.durationSec) ? rate.durationSec.toFixed(4) : "";
   const settings = options.adsSettings || adsSettingsSnapshot();
+  const repeats = options.repeatStats || StreamRecording.exactRepeatStats(headers, rows);
   const configuredRate = settings.rate || "";
   const configuredRateNum = Number(configuredRate);
   const rateDiff = Number.isFinite(rate.hz) && configuredRateNum > 0 ? Math.abs(rate.hz - configuredRateNum) : NaN;
@@ -3631,21 +3987,36 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     `# rate_match_status=${rateMatch}`,
     `# saved_samples=${rows?.length || 0}`,
     `# saved_duration_s=${duration}`,
+    `# repeated_all_channel_samples=${repeats.repeatedSamples}`,
+    `# repeated_all_channel_comparisons=${repeats.comparablePairs}`,
+    `# repeated_all_channel_percent=${repeats.percent.toFixed(6)}`,
     `# ads_gain=${settings.gain}`,
     `# ads_channel_gains=${settings.channelGains}`,
     `# ads_mux=${settings.mux}`,
     `# ads_reference=${settings.reference}`,
+    `# ads_reference_channel=${settings.referenceChannel}`,
+    `# ads_adc_reference=${settings.adcReference}`,
+    `# ads_vref_volts=${settings.vrefVolts}`,
+    `# ads_lsb_microvolts=${Number(settings.lsbMicrovolts).toFixed(9)}`,
     `# ads_channel_mask=${settings.channelMask}`,
     `# ads_bias=${settings.bias}`,
+    `# ads_bias_reference=${settings.biasReference}`,
+    `# ads_bias_sensp=${settings.biasSensp}`,
+    `# ads_bias_sensn=${settings.biasSensn}`,
     `# ads_lead_off=${settings.leadOff}`,
-    `# ads_test=OFF`,
+    `# ads_test=${settings.test}`,
+    `# ads_test_amplitude=${settings.testAmplitude}`,
+    `# ads_test_frequency=${settings.testFrequency}`,
+    `# ads_test_mask=${settings.testMask}`,
+    `# ads_offset_correction=${settings.offsetApplied}`,
+    `# ads_channel_offsets_raw=${settings.channelOffsetsRaw}`,
     `# channel_registers ${settings.channelRegisters}`,
     `# registers ${regs}`
   ];
 }
 
 function downloadStreamCsvWithMeta() {
-  downloadRowsCsv({
+  enqueueRowsCsv({
     headers: state.streamHeaders,
     rows: state.streamRows,
     withMeta: true,
@@ -3660,37 +4031,39 @@ function startRecordingWindow() {
     status("아직 stream header가 없습니다. 먼저 Start로 데이터가 들어오는지 확인하세요.");
     return;
   }
-  state.recording = true;
-  state.recordHeaders = state.streamHeaders.slice();
-  state.recordRows = [];
-  state.recordStartedAt = new Date();
-  state.recordStoppedAt = null;
-  state.lastRecordingUiAt = performance.now();
-  state.recordFirstTime = NaN;
-  state.recordLastTime = NaN;
-  state.recordTimedSamples = 0;
-  state.recordFileName = sanitizeCsvFileName($("recordFileName")?.value);
-  state.recordAdsSettings = adsSettingsSnapshot();
+  StreamRecording.begin(state, {
+    headers: state.streamHeaders,
+    startedAt: Date.now(),
+    uiStartedAt: performance.now(),
+    fileName: sanitizeCsvFileName($("recordFileName")?.value),
+    adsSettings: adsSettingsSnapshot()
+  });
   updateRecordingButtons();
   const nameText = state.recordFileName ? `\n저장 파일명: ${csvDownloadName({ prefix: "ads1299_recorded_window", fileName: state.recordFileName })}` : "\n저장 파일명: 자동 생성";
   status(`저장 시작됨\n현재 plot 대상: ${adsInputModeLabel()}${nameText}\n저장 멈춤을 누를 때까지 들어오는 샘플만 CSV에 담습니다.`);
 }
 
 function stopRecordingWindow() {
-  if (!state.recording && !state.recordRows.length) {
+  if (!state.recording) {
     status("저장 중인 구간이 없습니다.");
     return;
   }
-  state.recording = false;
-  state.recordStoppedAt = new Date();
+  const snapshot = StreamRecording.finish(state, Date.now());
   updateRecordingButtons();
-  downloadRowsCsv({
-    headers: state.recordHeaders,
-    rows: state.recordRows,
+  if (!snapshot.rows.length) {
+    status("저장 구간에 들어온 샘플이 없습니다.");
+    return;
+  }
+  status(`저장 종료됨\n샘플 ${snapshot.rows.length}개를 CSV로 준비 중입니다. 새 저장을 바로 시작해도 됩니다.`);
+  enqueueRowsCsv({
+    headers: snapshot.headers,
+    rows: snapshot.rows,
     withMeta: true,
     prefix: "ads1299_recorded_window",
-    adsSettings: state.recordAdsSettings,
-    fileName: state.recordFileName
+    adsSettings: snapshot.adsSettings,
+    fileName: snapshot.fileName,
+    repeatStats: snapshot.repeatStats,
+    detachedRows: true
   });
 }
 
@@ -3764,9 +4137,21 @@ $("adsPresetShort").addEventListener("click", () => applyAdsPreset("Input Short"
 $("adsPresetTemp").addEventListener("click", () => applyAdsPreset("Temperature", { rate: 250, gain: 1, mux: "TEMP", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsPresetMvdd").addEventListener("click", () => applyAdsPreset("MVDD Check", { rate: 250, gain: 1, mux: "MVDD", ref: "DIFFERENTIAL", bias: false, loff: false, test: false }).catch(err => status(String(err.stack || err))));
 $("adsPresetBias").addEventListener("click", () => applyAdsPreset("BIAS Measure", { rate: 250, gain: 24, mux: "BIAS_MEAS", ref: "DIFFERENTIAL", bias: true, loff: false, test: false }).catch(err => status(String(err.stack || err))));
+$("adsPresetTest").addEventListener("click", () => applyAdsPreset("Internal TEST", { rate: 250, gain: 24, mux: "TEST", ref: "DIFFERENTIAL", bias: false, loff: false, testAmp: "1X", testFreq: "SLOW" }).catch(err => status(String(err.stack || err))));
+$("adsRunTestBtn").addEventListener("click", () => startInternalTestDiagnostic().catch(err => status(String(err.stack || err))));
+$("adsOffsetCalBtn").addEventListener("click", () => startInputShortOffsetCalibration().catch(err => status(String(err.stack || err))));
+$("adsApplyOffset").addEventListener("change", () => {
+  state.offsetApplied = $("adsApplyOffset").checked;
+  status(`Input-short offset 적용 ${state.offsetApplied ? "ON" : "OFF"}. 변경 이후 수신 샘플부터 plot/CSV에 반영됩니다.`);
+});
+$("adsOffsetClearBtn").addEventListener("click", () => {
+  state.channelOffsetsRaw = Array(8).fill(0);
+  state.offsetApplied = false;
+  $("adsApplyOffset").checked = false;
+  setText("adsOffsetResult", "Offset을 지웠습니다.");
+});
 $("adsStartBtn").addEventListener("click", () => {
   resetLiveStream("Start 중: 새 stream plot을 준비합니다.");
-  forceElectrodeInputMode();
   rememberDesiredAdsChannels();
   sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"])
     .then(() => {
@@ -3830,10 +4215,23 @@ document.querySelectorAll(".tab").forEach(btn => {
   if (el) el.addEventListener("change", analyze);
 });
 
-["adsRate","adsGain","adsMux","adsRef","adsBiasOn","adsLoffOn"].forEach(id => {
+["adsRate","adsAdcRef","adsVrefVolts","adsBiasRef","adsBiasOn","adsLoffOn","adsTestAmp","adsTestFreq"].forEach(id => {
   const el = $(id);
-  if (el) el.addEventListener("change", updateAdsChannelPreview);
+  if (el) el.addEventListener("change", () => {
+    updateReferenceHelp();
+    updateAdsChannelPreview();
+  });
 });
+$("adsGain")?.addEventListener("change", () => {
+  adsChannelRows().forEach(row => row.querySelector(".ads-ch-gain").value = $("adsGain").value);
+  updateAdsChannelPreview();
+});
+$("adsMux")?.addEventListener("change", () => {
+  adsChannelRows().forEach(row => row.querySelector(".ads-ch-mux").value = $("adsMux").value);
+  updateAdsChannelPreview();
+});
+$("adsRef")?.addEventListener("change", syncReferenceModeToChannels);
+$("adsRefChannel")?.addEventListener("change", syncReferenceModeToChannels);
 $("adsChannels")?.addEventListener("change", syncChannelsTextToTable);
 
 $("plotChannelSpacing")?.addEventListener("input", e => {
@@ -3888,6 +4286,7 @@ window.addEventListener("resize", draw);
 
 renderAdsChannelConfig();
 renderAdsRegisterMap();
+updateReferenceHelp();
 updateRecordingButtons();
 setInterval(() => {
   updateTimers();

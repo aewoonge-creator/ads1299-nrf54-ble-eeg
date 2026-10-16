@@ -9,6 +9,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,10 +23,8 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_RX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400002, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
-#define FW_VERSION            "2026-09-09-gain-sync-v1"
-#define ADS1299_CONFIG2_ADDR  0x02
-#define ADS1299_CH1SET_ADDR   0x05
-#define ADS1299_CH8SET_ADDR   0x0C
+#define COMMAND_MAX_LEN       256
+#define FW_VERSION            "2026-10-15-test-cal-v4"
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -33,11 +32,11 @@ static struct bt_uuid_128 uart_tx_uuid = BT_UUID_INIT_128(UART_TX_UUID_VAL);
 
 static struct bt_conn *current_conn;
 static bool tx_notify_enabled;
-static char rx_line[160];
+static char rx_line[COMMAND_MAX_LEN];
 static size_t rx_len;
-static char rtt_rx_line[160];
+static char rtt_rx_line[COMMAND_MAX_LEN];
 static size_t rtt_rx_len;
-static char command_queue[COMMAND_QUEUE_DEPTH][160];
+static char command_queue[COMMAND_QUEUE_DEPTH][COMMAND_MAX_LEN];
 static uint8_t command_queue_head;
 static uint8_t command_queue_tail;
 static uint8_t command_queue_count;
@@ -46,7 +45,18 @@ static uint32_t ads_gain = 24;
 static bool ads_bias_enabled = true;
 static bool ads_lead_off_enabled;
 static bool ads_test_signal_enabled;
+static bool ads_test_signal_amplitude_2x;
+static enum ads1299_test_frequency ads_test_signal_frequency = ADS1299_TEST_FREQ_SLOW;
+static uint8_t ads_test_channel_mask;
 static uint8_t ads_enabled_channel_mask = 0xFF;
+static enum ads1299_input_mux ads_input_mux = ADS1299_MUX_NORMAL;
+static enum ads1299_reference_mode ads_reference_mode = ADS1299_REF_SRB1;
+static uint8_t ads_reference_channel;
+static bool ads_internal_reference = true;
+static uint32_t ads_vref_mv = 4500;
+static bool ads_internal_bias_reference = true;
+static uint8_t ads_bias_sensp_mask = 0xFF;
+static uint8_t ads_bias_sensn_mask = 0xFF;
 
 static void command_work_handler(struct k_work *work);
 K_WORK_DEFINE(command_work, command_work_handler);
@@ -56,39 +66,121 @@ static void ble_send_line(const char *line);
 static void handle_ads1299_command(const char *command);
 static void submit_command(const char *command);
 
-static bool command_has_token(const char *command, const char *token)
+static const char *command_find_value(const char *command, const char *key)
 {
-	return strstr(command, token) != NULL;
+	const char *pos = command;
+	size_t key_len = strlen(key);
+
+	while ((pos = strstr(pos, key)) != NULL) {
+		if (pos == command || pos[-1] == ' ') {
+			return pos + key_len;
+		}
+		pos++;
+	}
+	return NULL;
 }
 
 static uint32_t command_get_u32(const char *command, const char *key, uint32_t fallback)
 {
-	const char *pos = strstr(command, key);
+	const char *pos = command_find_value(command, key);
 
 	if (!pos) {
 		return fallback;
 	}
 
-	pos += strlen(key);
 	return (uint32_t)strtoul(pos, NULL, 0);
+}
+
+static bool command_value_is(const char *command, const char *key, const char *value)
+{
+	const char *pos = command_find_value(command, key);
+	size_t value_len = strlen(value);
+
+	return pos && strncmp(pos, value, value_len) == 0 &&
+	       (pos[value_len] == '\0' || pos[value_len] == ' ');
+}
+
+static enum ads1299_input_mux parse_input_mux(const char *command)
+{
+	if (command_value_is(command, "MUX=", "SHORTED")) return ADS1299_MUX_SHORTED;
+	if (command_value_is(command, "MUX=", "BIAS_MEAS")) return ADS1299_MUX_BIAS_MEAS;
+	if (command_value_is(command, "MUX=", "MVDD")) return ADS1299_MUX_MVDD;
+	if (command_value_is(command, "MUX=", "TEMP")) return ADS1299_MUX_TEMP;
+	if (command_value_is(command, "MUX=", "TEST")) return ADS1299_MUX_TEST;
+	if (command_value_is(command, "MUX=", "BIAS_DRP")) return ADS1299_MUX_BIAS_DRP;
+	if (command_value_is(command, "MUX=", "BIAS_DRN")) return ADS1299_MUX_BIAS_DRN;
+	return command_find_value(command, "MUX=") ? ADS1299_MUX_NORMAL : ads_input_mux;
+}
+
+static enum ads1299_test_frequency parse_test_frequency(const char *command)
+{
+	if (command_value_is(command, "TEST_FREQ=", "FAST")) return ADS1299_TEST_FREQ_FAST;
+	if (command_value_is(command, "TEST_FREQ=", "DC")) return ADS1299_TEST_FREQ_DC;
+	if (command_value_is(command, "TEST_FREQ=", "SLOW")) return ADS1299_TEST_FREQ_SLOW;
+	return ads_test_signal_frequency;
+}
+
+static const char *test_frequency_name(enum ads1299_test_frequency frequency)
+{
+	switch (frequency) {
+	case ADS1299_TEST_FREQ_FAST: return "FAST";
+	case ADS1299_TEST_FREQ_DC: return "DC";
+	case ADS1299_TEST_FREQ_SLOW:
+	default: return "SLOW";
+	}
+}
+
+static enum ads1299_reference_mode parse_reference_mode(const char *command)
+{
+	if (command_value_is(command, "REF=", "SRB1")) return ADS1299_REF_SRB1;
+	if (command_value_is(command, "REF=", "SRB2_COMMON") ||
+	    command_value_is(command, "REF=", "SRB2")) return ADS1299_REF_SRB2_COMMON;
+	if (command_value_is(command, "REF=", "SRB2_TO_SRB1") ||
+	    command_value_is(command, "REF=", "PROGRAMMABLE")) return ADS1299_REF_SRB2_TO_SRB1;
+	if (command_value_is(command, "REF=", "DIFFERENTIAL")) return ADS1299_REF_DIFFERENTIAL;
+	return ads_reference_mode;
+}
+
+static const char *input_mux_name(enum ads1299_input_mux mux)
+{
+	switch (mux) {
+	case ADS1299_MUX_SHORTED: return "SHORTED";
+	case ADS1299_MUX_BIAS_MEAS: return "BIAS_MEAS";
+	case ADS1299_MUX_MVDD: return "MVDD";
+	case ADS1299_MUX_TEMP: return "TEMP";
+	case ADS1299_MUX_BIAS_DRP: return "BIAS_DRP";
+	case ADS1299_MUX_BIAS_DRN: return "BIAS_DRN";
+	case ADS1299_MUX_TEST: return "TEST";
+	case ADS1299_MUX_NORMAL:
+	default: return "NORMAL";
+	}
+}
+
+static const char *reference_mode_name(enum ads1299_reference_mode mode)
+{
+	switch (mode) {
+	case ADS1299_REF_SRB1: return "SRB1";
+	case ADS1299_REF_SRB2_COMMON: return "SRB2_COMMON";
+	case ADS1299_REF_SRB2_TO_SRB1: return "SRB2_TO_SRB1";
+	case ADS1299_REF_DIFFERENTIAL:
+	default: return "DIFFERENTIAL";
+	}
 }
 
 static uint8_t parse_channel_mask(const char *command)
 {
-	const char *pos = strstr(command, "MASK=");
+	const char *pos = command_find_value(command, "MASK=");
 	uint8_t mask = 0;
 
 	if (pos) {
-		pos += strlen("MASK=");
 		return (uint8_t)strtoul(pos, NULL, 0);
 	}
 
-	pos = strstr(command, "ENABLE=");
+	pos = command_find_value(command, "ENABLE=");
 	if (!pos) {
 		return ads_enabled_channel_mask;
 	}
 
-	pos += strlen("ENABLE=");
 	if (strncmp(pos, "NONE", 4) == 0) {
 		return 0x00;
 	}
@@ -112,16 +204,38 @@ static uint8_t parse_channel_mask(const char *command)
 
 static int apply_current_ads_config(void)
 {
+	bool was_streaming = ads1299_is_streaming();
 	struct ads1299_config config = {
 		.sample_rate_sps = ads_sample_rate_sps,
 		.gain = ads_gain,
 		.bias_enabled = ads_bias_enabled,
 		.lead_off_enabled = ads_lead_off_enabled,
 		.test_signal_enabled = ads_test_signal_enabled,
+		.test_signal_amplitude_2x = ads_test_signal_amplitude_2x,
+		.test_signal_frequency = ads_test_signal_frequency,
+		.test_channel_mask = ads_test_channel_mask,
 		.enabled_channel_mask = ads_enabled_channel_mask,
+		.input_mux = ads_input_mux,
+		.reference_mode = ads_reference_mode,
+		.reference_channel = ads_reference_channel,
+		.internal_reference = ads_internal_reference,
+		.internal_bias_reference = ads_internal_bias_reference,
+		.bias_sensp_mask = ads_bias_sensp_mask,
+		.bias_sensn_mask = ads_bias_sensn_mask,
 	};
+	int err;
 
-	return ads1299_apply_config(&config);
+	if (was_streaming) {
+		err = ads1299_stop_stream();
+		if (err) {
+			return err;
+		}
+	}
+	err = ads1299_apply_config(&config);
+	if (err) {
+		return err;
+	}
+	return was_streaming ? ads1299_start_stream() : 0;
 }
 
 static uint8_t stream_channel_mask(void)
@@ -132,23 +246,6 @@ static uint8_t stream_channel_mask(void)
 static int64_t uptime_us(void)
 {
 	return k_ticks_to_us_floor64(k_uptime_ticks());
-}
-
-static uint32_t stream_rate_sps(void)
-{
-	return ads_sample_rate_sps ? ads_sample_rate_sps : 250;
-}
-
-static int64_t stream_period_us(void)
-{
-	uint32_t rate = stream_rate_sps();
-
-	return MAX((int64_t)1, (int64_t)((1000000U + rate - 1U) / rate));
-}
-
-static uint32_t stream_sample_time_us(uint32_t sample_index)
-{
-	return (uint32_t)(((uint64_t)sample_index * 1000000ULL) / stream_rate_sps());
 }
 
 static void send_stream_header(void)
@@ -178,7 +275,7 @@ static void send_stream_sample(const struct ads1299_sample *sample)
 	size_t used;
 	uint8_t mask = stream_channel_mask();
 
-	used = snprintk(line, sizeof(line), "%u", sample->t_ms);
+	used = snprintk(line, sizeof(line), "%u", sample->t_us);
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		if ((mask & BIT(i)) == 0) {
 			continue;
@@ -196,13 +293,28 @@ static void send_stream_sample(const struct ads1299_sample *sample)
 
 static void send_ads_state(const char *prefix)
 {
-	char line[96];
+	char line[COMMAND_MAX_LEN];
 
-	snprintk(line, sizeof(line), "FW STATE %s RATE=%u GAIN=%u TEST=%s MASK=0x%02X\n",
+	snprintk(line, sizeof(line),
+		 "FW STATE %s RATE=%u GAIN=%u MUX=%s REF=%s REF_CH=%u "
+		 "ADC_REF=%s VREF_MV=%u BIAS=%s BIASREF=%s BIASP=0x%02X "
+		 "BIASN=0x%02X TEST=%s TEST_AMP=%s TEST_FREQ=%s TEST_MASK=0x%02X MASK=0x%02X\n",
 		 prefix,
 		 ads_sample_rate_sps,
 		 ads_gain,
+		 input_mux_name(ads_input_mux),
+		 reference_mode_name(ads_reference_mode),
+		 ads_reference_channel + 1,
+		 ads_internal_reference ? "INTERNAL" : "EXTERNAL",
+		 ads_vref_mv,
+		 ads_bias_enabled ? "ON" : "OFF",
+		 ads_internal_bias_reference ? "INTERNAL" : "EXTERNAL",
+		 ads_bias_sensp_mask,
+		 ads_bias_sensn_mask,
 		 ads_test_signal_enabled ? "ON" : "OFF",
+		 ads_test_signal_amplitude_2x ? "2X" : "1X",
+		 test_frequency_name(ads_test_signal_frequency),
+		 ads_test_channel_mask,
 		 ads_enabled_channel_mask);
 	ble_send_line(line);
 }
@@ -330,7 +442,7 @@ static void ble_send_line(const char *line)
 
 static void submit_command(const char *command)
 {
-	char ack[180];
+	char ack[COMMAND_MAX_LEN + 16];
 	bool queued = false;
 
 	snprintk(ack, sizeof(ack), "ACK %s\n", command);
@@ -355,7 +467,7 @@ static void submit_command(const char *command)
 
 static void handle_ads1299_command(const char *command)
 {
-	char ack[180];
+	char ack[COMMAND_MAX_LEN + 16];
 
 	snprintk(ack, sizeof(ack), "RX %s\n", command);
 	ble_send_line(ack);
@@ -381,7 +493,18 @@ static void handle_ads1299_command(const char *command)
 			ads_bias_enabled = true;
 			ads_lead_off_enabled = false;
 			ads_test_signal_enabled = false;
+			ads_test_signal_amplitude_2x = false;
+			ads_test_signal_frequency = ADS1299_TEST_FREQ_SLOW;
+			ads_test_channel_mask = 0x00;
 			ads_enabled_channel_mask = 0xFF;
+			ads_input_mux = ADS1299_MUX_NORMAL;
+			ads_reference_mode = ADS1299_REF_SRB1;
+			ads_reference_channel = 0;
+			ads_internal_reference = true;
+			ads_vref_mv = 4500;
+			ads_internal_bias_reference = true;
+			ads_bias_sensp_mask = 0xFF;
+			ads_bias_sensn_mask = 0xFF;
 			ble_send_line("OK INIT\n");
 			send_ads_state("INIT");
 			send_stream_header();
@@ -412,9 +535,15 @@ static void handle_ads1299_command(const char *command)
 	}
 	if (strcmp(command, "TST") == 0 ||
 	    strcmp(command, "ADS1299 TEST") == 0) {
-		ads_test_signal_enabled = false;
-		ble_send_line("ERR TEST_DISABLED\n");
-		send_ads_state("TEST_DISABLED");
+		ads_test_signal_enabled = true;
+		ads_test_signal_amplitude_2x = false;
+		ads_test_signal_frequency = ADS1299_TEST_FREQ_SLOW;
+		ads_test_channel_mask = ads_enabled_channel_mask;
+		int err = apply_current_ads_config();
+		ble_send_line(err == 0 ? "OK TEST\n" : "ERR TEST\n");
+		if (err == 0) {
+			send_ads_state("TEST");
+		}
 		return;
 	}
 	if (strcmp(command, "ADS1299 SPI LOOPBACK") == 0) {
@@ -531,29 +660,23 @@ static void handle_ads1299_command(const char *command)
 		return;
 	}
 	if (strcmp(command, "ADS1299 RREG ALL") == 0) {
-		char response[128];
-		uint8_t id = 0;
-		uint8_t config1 = 0;
-		uint8_t config2 = 0;
-		uint8_t config3 = 0;
-		int err = ads1299_read_register(0x00, &id);
+		char response[32];
+		int err = 0;
 
-		if (err == 0) {
-			err = ads1299_read_register(0x01, &config1);
-		}
-		if (err == 0) {
-			err = ads1299_read_register(0x02, &config2);
-		}
-		if (err == 0) {
-			err = ads1299_read_register(0x03, &config3);
-		}
-		if (err == 0) {
-			snprintk(response, sizeof(response),
-				"REG ID=0x%02X CONFIG1=0x%02X CONFIG2=0x%02X CONFIG3=0x%02X\n",
-				id, config1, config2, config3);
+		for (uint8_t reg = 0x00; reg <= 0x17; reg++) {
+			uint8_t value = 0;
+
+			err = ads1299_read_register(reg, &value);
+			if (err) {
+				break;
+			}
+			snprintk(response, sizeof(response), "REG 0x%02X 0x%02X\n", reg, value);
 			ble_send_line(response);
-		} else {
-			ble_send_line("ERR RREG_ALL\n");
+			k_sleep(K_MSEC(2));
+		}
+		if (err) {
+			snprintk(response, sizeof(response), "ERR RREG_ALL %d\n", err);
+			ble_send_line(response);
 		}
 		return;
 	}
@@ -590,13 +713,6 @@ static void handle_ads1299_command(const char *command)
 		uint8_t reg = (uint8_t)strtoul(command + 13, &end, 0);
 		uint8_t value = (uint8_t)strtoul(end, NULL, 0);
 
-		if (reg == ADS1299_CONFIG2_ADDR) {
-			value &= (uint8_t)~BIT(4);
-		} else if (reg >= ADS1299_CH1SET_ADDR && reg <= ADS1299_CH8SET_ADDR &&
-			   (value & 0x07) == 0x05) {
-			value = (value & 0xF8);
-		}
-
 		int err = ads1299_write_register(reg, value);
 
 		ble_send_line(err == 0 ? "OK WREG\n" : "ERR WREG\n");
@@ -605,10 +721,52 @@ static void handle_ads1299_command(const char *command)
 	if (strncmp(command, "ADS1299 CONFIG", 14) == 0) {
 		ads_sample_rate_sps = command_get_u32(command, "RATE=", ads_sample_rate_sps);
 		ads_gain = command_get_u32(command, "GAIN=", ads_gain);
-		ads_bias_enabled = command_has_token(command, "BIAS=ON");
-		ads_lead_off_enabled = command_has_token(command, "LOFF=ON");
-		ads_test_signal_enabled = false;
+		ads_input_mux = parse_input_mux(command);
+		ads_reference_mode = parse_reference_mode(command);
+		if (command_find_value(command, "REF_CH=")) {
+			uint32_t channel = command_get_u32(command, "REF_CH=", 1);
+
+			ads_reference_channel = (uint8_t)CLAMP(channel, 1, ADS1299_CHANNEL_COUNT) - 1;
+		}
+		if (command_find_value(command, "ADC_REF=")) {
+			ads_internal_reference = command_value_is(command, "ADC_REF=", "INTERNAL");
+		}
+		ads_vref_mv = command_get_u32(command, "VREF_MV=", ads_vref_mv);
+		if (ads_vref_mv < 100 || ads_vref_mv > 10000) {
+			ads_vref_mv = 4500;
+		}
+		if (command_find_value(command, "BIAS=")) {
+			ads_bias_enabled = command_value_is(command, "BIAS=", "ON");
+		}
+		if (command_find_value(command, "BIASREF=")) {
+			ads_internal_bias_reference = command_value_is(command, "BIASREF=", "INTERNAL");
+		}
+		if (command_find_value(command, "LOFF=")) {
+			ads_lead_off_enabled = command_value_is(command, "LOFF=", "ON");
+		}
 		ads_enabled_channel_mask = parse_channel_mask(command);
+		if (command_find_value(command, "TEST=")) {
+			ads_test_signal_enabled = command_value_is(command, "TEST=", "ON");
+		}
+		if (command_find_value(command, "TEST_AMP=")) {
+			ads_test_signal_amplitude_2x = command_value_is(command, "TEST_AMP=", "2X");
+		}
+		ads_test_signal_frequency = parse_test_frequency(command);
+		ads_test_channel_mask = (uint8_t)command_get_u32(
+			command, "TEST_MASK=", ads_test_signal_enabled ? ads_enabled_channel_mask : 0x00);
+		if (ads_input_mux == ADS1299_MUX_TEST) {
+			ads_test_signal_enabled = true;
+			ads_test_channel_mask = ads_enabled_channel_mask;
+			ads_input_mux = ADS1299_MUX_NORMAL;
+		}
+		ads_test_channel_mask &= ads_enabled_channel_mask;
+		if (!ads_test_signal_enabled) {
+			ads_test_channel_mask = 0x00;
+		}
+		ads_bias_sensp_mask = (uint8_t)command_get_u32(
+			command, "BIASP=", ads_enabled_channel_mask);
+		ads_bias_sensn_mask = (uint8_t)command_get_u32(
+			command, "BIASN=", ads_enabled_channel_mask);
 
 		int err = apply_current_ads_config();
 		ble_send_line(err == 0 ? "OK CONFIG\n" : "ERR CONFIG\n");
@@ -641,7 +799,7 @@ static void handle_ads1299_command(const char *command)
 
 static void command_work_handler(struct k_work *work)
 {
-	char command[160];
+	char command[COMMAND_MAX_LEN];
 
 	ARG_UNUSED(work);
 
@@ -711,8 +869,7 @@ int main(void)
 		char line[160];
 		static int64_t last_auto_probe_ms;
 		static int64_t last_stream_status_ms;
-		static int64_t next_sample_us;
-		static uint32_t stream_sample_index;
+		static int64_t stream_started_us;
 		static bool stream_was_active;
 		int64_t now_us = uptime_us();
 		int sample_err;
@@ -763,26 +920,22 @@ int main(void)
 
 		if (ads1299_is_streaming() && !stream_was_active) {
 			stream_was_active = true;
-			stream_sample_index = 0;
-			next_sample_us = now_us;
+			stream_started_us = now_us;
 		}
 
-		if (ads1299_is_streaming() && now_us >= next_sample_us) {
-			int64_t period_us = stream_period_us();
-
+		if (ads1299_is_streaming()) {
 			sample_err = ads1299_read_sample(&sample);
 			if (sample_err == 0) {
-				sample.t_ms = stream_sample_time_us(stream_sample_index++);
+				/* Use the actual device read time so missed conversions remain
+				 * visible as timestamp gaps instead of being hidden by a nominal
+				 * sample index clock.  The protocol field remains t_us.
+				 */
+				int64_t elapsed_us = MAX((int64_t)0, uptime_us() - stream_started_us);
+
+				sample.t_us = (uint32_t)MIN(elapsed_us, (int64_t)UINT32_MAX);
 				send_stream_sample(&sample);
-				next_sample_us += period_us;
-				if (uptime_us() - next_sample_us > period_us &&
-				    k_uptime_get() - last_stream_status_ms > 1000) {
-					last_stream_status_ms = k_uptime_get();
-					snprintk(line, sizeof(line), "STREAM LAG RATE=%u\n",
-						 stream_rate_sps());
-					ble_send_line(line);
-				}
-			} else if (k_uptime_get() - last_stream_status_ms > 1000) {
+			} else if (sample_err != -EAGAIN &&
+				   k_uptime_get() - last_stream_status_ms > 1000) {
 				last_stream_status_ms = k_uptime_get();
 				snprintk(line, sizeof(line), "STREAM ERR %d\n", sample_err);
 				ble_send_line(line);

@@ -40,6 +40,7 @@ LOG_MODULE_REGISTER(ads1299, LOG_LEVEL_INF);
 #define ADS1299_REG_CH1SET  0x05
 #define ADS1299_REG_BIAS_SENSP 0x0D
 #define ADS1299_REG_BIAS_SENSN 0x0E
+#define ADS1299_REG_MISC1       0x15
 
 #define ADS1299_FRAME_BYTES (3 + ADS1299_CHANNEL_COUNT * 3)
 #define ADS1299_SPI_FREQUENCY_HZ 1000000U
@@ -293,7 +294,17 @@ int ads1299_init_device(void)
 		.bias_enabled = true,
 		.lead_off_enabled = false,
 		.test_signal_enabled = false,
+		.test_signal_amplitude_2x = false,
+		.test_signal_frequency = ADS1299_TEST_FREQ_SLOW,
+		.test_channel_mask = 0x00,
 		.enabled_channel_mask = 0xFF,
+		.input_mux = ADS1299_MUX_NORMAL,
+		.reference_mode = ADS1299_REF_SRB1,
+		.reference_channel = 0,
+		.internal_reference = true,
+		.internal_bias_reference = true,
+		.bias_sensp_mask = 0xFF,
+		.bias_sensn_mask = 0xFF,
 	};
 
 	err = ads1299_configure_spi_pins();
@@ -838,10 +849,24 @@ int ads1299_apply_config(const struct ads1299_config *config)
 	uint8_t config2;
 	uint8_t config3;
 	uint8_t loff;
-	uint8_t chset_enabled;
-	uint8_t chset_disabled;
+	uint8_t gain;
+	uint8_t mux;
+	uint8_t misc1;
+	uint8_t srb2_mask = 0;
 
 	if (!config) {
+		return -EINVAL;
+	}
+	if (config->input_mux > ADS1299_MUX_BIAS_DRN ||
+	    config->reference_mode > ADS1299_REF_SRB2_TO_SRB1 ||
+	    config->reference_channel >= ADS1299_CHANNEL_COUNT ||
+	    (config->test_signal_frequency != ADS1299_TEST_FREQ_SLOW &&
+	     config->test_signal_frequency != ADS1299_TEST_FREQ_FAST &&
+	     config->test_signal_frequency != ADS1299_TEST_FREQ_DC)) {
+		return -EINVAL;
+	}
+	if (config->reference_mode == ADS1299_REF_SRB2_TO_SRB1 &&
+	    (config->enabled_channel_mask & BIT(config->reference_channel)) == 0) {
 		return -EINVAL;
 	}
 
@@ -852,9 +877,35 @@ int ads1299_apply_config(const struct ads1299_config *config)
 	k_sleep(K_MSEC(2));
 
 	config1 = 0x90 | data_rate_bits(config->sample_rate_sps);
-	config2 = config->test_signal_enabled ? 0xD0 : 0xC0;
-	config3 = config->bias_enabled ? 0xEC : 0xE0;
+	config2 = 0xC0;
+	if (config->test_signal_enabled) {
+		config2 |= BIT(4);
+	}
+	if (config->test_signal_amplitude_2x) {
+		config2 |= BIT(2);
+	}
+	config2 |= (uint8_t)config->test_signal_frequency;
+	config3 = 0x60;
+	if (config->internal_reference) {
+		config3 |= BIT(7);
+	}
+	if (config->input_mux == ADS1299_MUX_BIAS_MEAS) {
+		config3 |= BIT(4);
+	}
+	if (config->internal_bias_reference) {
+		config3 |= BIT(3);
+	}
+	if (config->bias_enabled) {
+		config3 |= BIT(2);
+	}
 	loff = config->lead_off_enabled ? 0x03 : 0x00;
+	misc1 = (config->reference_mode == ADS1299_REF_SRB1 ||
+		 config->reference_mode == ADS1299_REF_SRB2_TO_SRB1) ? BIT(5) : 0;
+	if (config->reference_mode == ADS1299_REF_SRB2_COMMON) {
+		srb2_mask = config->enabled_channel_mask;
+	} else if (config->reference_mode == ADS1299_REF_SRB2_TO_SRB1) {
+		srb2_mask = BIT(config->reference_channel);
+	}
 
 	err = ads1299_write_reg(ADS1299_REG_CONFIG1, config1);
 	if (err) {
@@ -873,13 +924,19 @@ int ads1299_apply_config(const struct ads1299_config *config)
 		return err;
 	}
 
-	chset_enabled = (gain_bits(config->gain) << 4) |
-			(config->test_signal_enabled ? 0x05 : 0x00);
-	chset_disabled = 0x80 | chset_enabled;
-
+	gain = gain_bits(config->gain) << 4;
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
-		uint8_t value = (config->enabled_channel_mask & BIT(i)) ?
-			chset_enabled : chset_disabled;
+		uint8_t value;
+
+		if (config->enabled_channel_mask & BIT(i)) {
+			mux = (config->test_signal_enabled &&
+			       (config->test_channel_mask & BIT(i))) ?
+				ADS1299_MUX_TEST : config->input_mux;
+			value = gain | mux | ((srb2_mask & BIT(i)) ? BIT(3) : 0);
+		} else {
+			/* ADS1299 recommends shorting a channel before powering it down. */
+			value = BIT(7) | gain | ADS1299_MUX_SHORTED;
+		}
 		err = ads1299_write_reg(ADS1299_REG_CH1SET + i, value);
 		if (err) {
 			return err;
@@ -887,12 +944,18 @@ int ads1299_apply_config(const struct ads1299_config *config)
 	}
 
 	err = ads1299_write_reg(ADS1299_REG_BIAS_SENSP,
-				config->bias_enabled ? config->enabled_channel_mask : 0x00);
+				config->bias_enabled ?
+				(config->bias_sensp_mask & config->enabled_channel_mask) : 0x00);
 	if (err) {
 		return err;
 	}
 	err = ads1299_write_reg(ADS1299_REG_BIAS_SENSN,
-				config->bias_enabled ? config->enabled_channel_mask : 0x00);
+				config->bias_enabled ?
+				(config->bias_sensn_mask & config->enabled_channel_mask) : 0x00);
+	if (err) {
+		return err;
+	}
+	err = ads1299_write_reg(ADS1299_REG_MISC1, misc1);
 	if (err) {
 		return err;
 	}
@@ -904,6 +967,7 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 {
 	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
 	uint8_t frame[ADS1299_FRAME_BYTES + 1];
+	int data_ready;
 	int err;
 
 	if (!sample) {
@@ -913,6 +977,20 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 		return -EAGAIN;
 	}
 	if (!data_pins_configured) {
+		return -EAGAIN;
+	}
+
+	/*
+	 * DRDY is active-low in hardware and declared GPIO_ACTIVE_LOW, so the
+	 * logical value is 1 only when a new conversion is ready.  Reading RDATA
+	 * from a timer without this gate can return the previous conversion again
+	 * whenever the host loop wakes early or tries to catch up after a delay.
+	 */
+	data_ready = gpio_pin_get_dt(&drdy_gpio);
+	if (data_ready < 0) {
+		return data_ready;
+	}
+	if (data_ready == 0) {
 		return -EAGAIN;
 	}
 	err = bitbang_gpio_configure(gpio);
@@ -933,7 +1011,7 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
 	k_mutex_unlock(&spi_lock);
 
-	sample->t_ms = k_uptime_get_32();
+	sample->t_us = k_uptime_get_32() * 1000U;
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		int base = 1 + 3 + i * 3;
 		uint32_t raw = ((uint32_t)frame[base] << 16) |
