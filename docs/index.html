@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-10-16-drdy-p111-v6">
+  <meta name="app-version" content="2026-10-16-measurement-v7">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -489,15 +489,20 @@
     .plotPanel {
       grid-column: 1;
       grid-row: 2 / 4;
-      display: grid;
-      grid-template-rows: auto auto minmax(380px, 1fr) auto auto;
+      display: flex;
+      flex-direction: column;
       min-width: 0;
       min-height: 0;
-      overflow: hidden;
+      overflow: auto;
     }
+    .plotPanel > * { flex-shrink: 0; }
+    #plot { height: 440px; }
+    #measurementSettings { white-space: pre-line; overflow-wrap: anywhere; }
+    #validationPanel .analysisGrid { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
 
     .plotHeader {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
@@ -528,7 +533,8 @@
       align-items: center;
       gap: 6px;
       margin-left: auto;
-      flex: 0 0 auto;
+      flex: 1 1 560px;
+      flex-wrap: wrap;
     }
 
     .plotActions button {
@@ -597,6 +603,7 @@
     }
 
     .analysisItem {
+      overflow-wrap: anywhere;
       min-width: 0;
       padding: 7px 8px;
       border: 1px solid #e3e8f0;
@@ -1026,7 +1033,7 @@
       <div id="adsLeadStatusGrid" class="leadGrid"></div>
     <div class="triple">
       <div>
-        <label for="adsRate">SPS</label>
+        <label for="adsRate">ADC SPS (전체 채널 공통)</label>
         <select id="adsRate">
           <option>250</option>
           <option>500</option>
@@ -1038,7 +1045,7 @@
         </select>
       </div>
       <div>
-        <label for="adsGain">Gain</label>
+        <label for="adsGain">일괄 Gain 선택 (현재 적용값 아님)</label>
         <select id="adsGain">
           <option>24</option>
           <option>12</option>
@@ -1048,6 +1055,8 @@
           <option>2</option>
           <option>1</option>
         </select>
+        <button id="adsCopyGainBtn" type="button">Gain만 전체 채널에 복사</button>
+        <div id="adsGainSummary" class="note">실제 Gain: Read Regs 대기</div>
       </div>
       <div>
         <label for="adsMux">MUX</label>
@@ -1146,7 +1155,7 @@
           <tr>
             <th>CH</th>
             <th>사용</th>
-            <th>Gain</th>
+            <th>요청 Gain</th><th>실제 Gain<br>(Readback)</th>
             <th>MUX</th>
             <th>SRB2</th>
             <th>BIAS +</th>
@@ -1154,14 +1163,14 @@
             <th>LOFF P</th>
             <th>LOFF N</th>
             <th>Flip</th>
-            <th>CHnSET</th>
+            <th>예상 CHnSET</th>
           </tr>
         </thead>
         <tbody id="adsChannelConfig"></tbody>
       </table>
     </div>
     <div class="row">
-      <button id="adsCopyGlobalBtn">전체 설정 복사</button>
+      <button id="adsCopyGlobalBtn">전체 요청 설정 복사 (BIAS 마스크 유지)</button>
       <button id="adsApplyChannelTableBtn" class="secondary">채널 설정 적용</button>
     </div>
     </div>
@@ -1175,7 +1184,7 @@
               <tr>
                 <th>Addr</th>
                 <th>Name</th>
-                <th>Value</th>
+                <th>Requested</th><th>Applied (ACK)</th><th>Readback</th><th>확인</th>
                 <th>역할</th>
               </tr>
             </thead>
@@ -1206,7 +1215,7 @@
       <h2>4. 원신호 품질 확인</h2>
       <div class="statusGrid">
         <div class="statusCard"><strong>DC offset</strong><span id="eegDc">-</span></div>
-        <div class="statusCard"><strong>RMS noise</strong><span id="eegRms">-</span></div>
+        <div class="statusCard"><strong>RMS (DC 포함)</strong><span id="eegRms">-</span></div>
         <div class="statusCard"><strong>P-P amplitude</strong><span id="eegP2p">-</span></div>
         <div class="statusCard"><strong>Min / Max</strong><span id="eegRange">-</span></div>
       </div>
@@ -1266,7 +1275,7 @@
         </select>
       </div>
       <div>
-        <label for="plotFixedScale">Fixed raw</label>
+        <label for="plotFixedScale">Fixed ± (선택 표시 단위)</label>
         <input id="plotFixedScale" type="number" min="1" step="100" value="50000">
       </div>
     </div>
@@ -1304,6 +1313,7 @@
         <button class="tab" data-view="fft">FFT</button>
         <button class="tab" data-view="psd">PSD</button>
         <button class="tab" data-view="compare">Compare</button>
+        <button class="tab" data-view="validation">Signal Validation</button>
       </div>
       <div class="metrics">
         <div class="metric" id="mSamples">samples: 0</div>
@@ -1332,6 +1342,28 @@
         <div class="analysisBox">
           <h2>분석 로그 / 설정 확인</h2>
           <div id="analysisLog" class="analysisGrid"></div>
+          <div id="measurementSettings" class="note"></div>
+          <label for="signalUnit">Raw / Filtered 표시 단위 (CSV는 항상 원본 counts)</label>
+          <select id="signalUnit"><option value="counts">ADC counts</option><option value="uv">입력 환산 µV</option></select>
+        </div>
+        <div id="validationPanel" class="analysisBox hidden">
+          <h2>External Signal / Input-short Validation</h2>
+          <p class="note">현재 파일 또는 최근 수신 데이터의 원본을 분석합니다. 필터·offset 보정은 적용하지 않습니다. 발생기 설정값과 실제 입력 실측값은 구분해서 입력하세요.</p>
+          <div class="analysisGrid">
+            <label>분석 종류<select id="validationMode"><option value="sine">외부 사인파</option><option value="short">Input-short 잡음</option></select></label>
+            <label>채널<select id="validationChannel"><option>ch1</option><option>ch2</option><option>ch3</option><option>ch4</option><option>ch5</option><option>ch6</option><option>ch7</option><option>ch8</option></select></label>
+            <label>발생기 주파수 (Hz)<input id="validationFrequency" type="number" min="0.1" step="0.1" value="2"></label>
+            <label>발생기 진폭 (mVpp)<input id="validationAmplitude" type="number" min="0.001" step="0.1" value="10"></label>
+            <label>입력 실측 진폭 (mVpp, 선택)<input id="validationMeasuredAmplitude" type="number" min="0.001" step="0.1" placeholder="미측정"></label>
+            <label>시작 (s, 파일/최근 버퍼 기준)<input id="validationStart" type="number" min="0" value="0"></label>
+            <label>길이 (s)<input id="validationDuration" type="number" min="1" max="120" value="60"></label>
+            <label>진폭 허용오차 (%)<input id="validationAmpTolerance" type="number" min="0" step="0.1" value="5"></label>
+            <label>주파수 허용오차 (%)<input id="validationFreqTolerance" type="number" min="0" step="0.1" value="1"></label>
+          </div>
+          <button id="validationRun">원본 구간 분석</button>
+          <button id="validationExport" disabled>검증 결과 JSON</button>
+          <pre id="validationResult" style="white-space:pre-wrap;overflow-wrap:anywhere">분석 대기</pre>
+          <p class="note">사인파: 실제 t_us 기반 sine+cosine+DC 최소제곱 피팅(목표 주파수 ±20%, 최소 3주기). PSD: nominal SPS, Hann, 50% overlap, 최대 1024 samples, 구간별 DC 제거, one-sided µV²/Hz. 불규칙 수신 간격이 있으면 PSD 주파수/밀도는 근사값입니다. Input-short는 칩 내부 잡음 시험이며 전극 접촉이나 생체 EEG 품질 검사가 아닙니다.</p>
         </div>
         <canvas id="plot"></canvas>
         <div class="liveCheck">
@@ -1375,6 +1407,7 @@
 </main>
 
 <script src="./stream-recording.js"></script>
+<script src="./signal-core.js"></script>
 <script>
 const state = {
   rows: [],
@@ -1422,8 +1455,15 @@ const state = {
   lastLiveStatsAt: 0,
   lastMiniPlotAt: 0,
   adsDesiredChannels: null,
-  adsAppliedRate: 250,
-  adsAppliedGain: 24,
+  adsAppliedRate: null,
+  adsAppliedGain: null,
+  datasetContext: null,
+  hardwareVrefVolts: NaN,
+  configRevision: 0,
+  commandChain: Promise.resolve(),
+  commandJobs: 0,
+  commandFault: false,
+  pendingCommand: null,
   testRows: [],
   testDiagnostic: null,
   channelOffsetsRaw: Array(8).fill(0),
@@ -1461,6 +1501,9 @@ const adsRegisters = [
 ];
 
 const adsRegisterValues = {};
+const adsExpectedRegisters = {};
+const adsAppliedRegisters = {};
+const adsRegisterTimes = {};
 const adsGainBits = { "1": 0b000, "2": 0b001, "4": 0b010, "6": 0b011, "8": 0b100, "12": 0b101, "24": 0b110 };
 const adsGainByBits = { 0: 1, 1: 2, 2: 4, 3: 6, 4: 8, 5: 12, 6: 24 };
 const adsMuxBits = { NORMAL: 0b000, SHORTED: 0b001, BIAS_MEAS: 0b010, MVDD: 0b011, TEMP: 0b100, TEST: 0b101, BIAS_DRP: 0b110, BIAS_DRN: 0b111 };
@@ -1558,6 +1601,7 @@ function renderAdsChannelConfig() {
         <td><strong>CH${ch}</strong></td>
         <td><input class="ads-ch-enable" type="checkbox" checked aria-label="CH${ch} enable"></td>
         <td><select class="ads-ch-gain" aria-label="CH${ch} gain">${selectHtml(gains, "24")}</select></td>
+        <td class="ads-ch-readback">미확인</td>
         <td><select class="ads-ch-mux" aria-label="CH${ch} mux">${selectHtml(muxes, "NORMAL")}</select></td>
         <td><input class="ads-ch-srb2" type="checkbox" aria-label="CH${ch} SRB2"></td>
         <td><input class="ads-ch-biasp" type="checkbox" checked aria-label="CH${ch} BIAS positive"></td>
@@ -1600,19 +1644,19 @@ function updateAdsChannelPreview(syncChannelsText = false) {
 
 function updateRegisterPreviewFromChannelTable() {
   adsChannelRows().forEach((row, idx) => {
-    adsRegisterValues[0x05 + idx] = chSetValue(row);
+    adsExpectedRegisters[0x05 + idx] = chSetValue(row);
   });
-  adsRegisterValues[0x01] = config1PreviewValue();
-  adsRegisterValues[0x02] = config2PreviewValue();
-  adsRegisterValues[0x03] = config3PreviewValue();
-  adsRegisterValues[0x04] = loffPreviewValue();
-  adsRegisterValues[0x0D] = $("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasp") : 0;
-  adsRegisterValues[0x0E] = $("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasn") : 0;
-  adsRegisterValues[0x0F] = maskFromSelector(".ads-ch-loffp");
-  adsRegisterValues[0x10] = maskFromSelector(".ads-ch-loffn");
-  adsRegisterValues[0x11] = maskFromSelector(".ads-ch-loffflip");
-  adsRegisterValues[0x15] = referenceRegisterValue();
-  adsRegisterValues[0x17] = $("adsLoffOn")?.checked ? 0x02 : 0x00;
+  adsExpectedRegisters[0x01] = config1PreviewValue();
+  adsExpectedRegisters[0x02] = config2PreviewValue();
+  adsExpectedRegisters[0x03] = config3PreviewValue();
+  adsExpectedRegisters[0x04] = loffPreviewValue();
+  adsExpectedRegisters[0x0D] = $("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasp") : 0;
+  adsExpectedRegisters[0x0E] = $("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasn") : 0;
+  adsExpectedRegisters[0x0F] = maskFromSelector(".ads-ch-loffp");
+  adsExpectedRegisters[0x10] = maskFromSelector(".ads-ch-loffn");
+  adsExpectedRegisters[0x11] = maskFromSelector(".ads-ch-loffflip");
+  adsExpectedRegisters[0x15] = referenceRegisterValue();
+  adsExpectedRegisters[0x17] = $("adsLoffOn")?.checked ? 0x02 : 0x00;
   renderAdsRegisterMap();
 }
 
@@ -1642,8 +1686,7 @@ function copyGlobalAdsSettingsToChannels() {
     row.querySelector(".ads-ch-mux").value = adsMuxBits[mux] === undefined ? "NORMAL" : mux;
     row.querySelector(".ads-ch-srb2").checked = referenceMode === "SRB2_COMMON" ||
       (referenceMode === "SRB2_TO_SRB1" && ch === referenceChannel);
-    row.querySelector(".ads-ch-biasp").checked = $("adsBiasOn").checked;
-    row.querySelector(".ads-ch-biasn").checked = $("adsBiasOn").checked;
+    // BIAS sensing selection is independent of the amplifier enable switch.
     row.querySelector(".ads-ch-loffp").checked = $("adsLoffOn").checked;
     row.querySelector(".ads-ch-loffn").checked = $("adsLoffOn").checked;
     row.querySelector(".ads-ch-loffflip").checked = false;
@@ -1668,7 +1711,8 @@ function updateReferenceHelp() {
   const adcWarning = $("adsAdcRef")?.value === "EXTERNAL"
     ? " External ADC VREF를 선택하면 VREFP/VREFN에 안정된 외부 기준전압이 실제로 공급되어야 합니다."
     : "";
-  setText("adsRefHelp", (messages[mode] || messages.DIFFERENTIAL) + biasWarning + adcWarning);
+  setText("adsRefHelp", (messages[mode] || messages.DIFFERENTIAL) + biasWarning + adcWarning +
+    ' REF_ELEC(전극 기준), ADC VREF(변환 기준전압), AGND(회로 기준)는 서로 다릅니다. BIAS drive는 증폭기 enable, BIAS+/−는 피드백에 포함할 입력 선택입니다. Drive OFF이면 전송 BIAS 마스크는 0이며 체크 선택은 보존됩니다.');
 }
 
 function syncReferenceModeToChannels() {
@@ -1748,7 +1792,8 @@ function adsFullConfigCommands() {
 function adsRuntimeConfigCommands() {
   return [
     ...adsGlobalConfigCommands(),
-    ...adsChannelTableCommands()
+    ...adsChannelTableCommands(),
+    "ADS1299 RREG ALL"
   ];
 }
 
@@ -1878,7 +1923,7 @@ async function applyAdsMode(name, configure) {
   if (typeof configure === "function") configure();
   rememberDesiredAdsChannels();
   resetLiveStream(`${name} 적용 중: 이전 plot과 stream 데이터를 초기화했습니다.`);
-  await sendAds1299Commands(adsFullConfigCommands());
+  await sendAds1299Commands(["ADS1299 STOP", ...adsFullConfigCommands()]);
   syncPlotSelectionToAdsChannels();
   status(`${name} 적용됨\n현재 plot 대상: ${currentPlotTargetLabel()}\nStart를 누르면 현재 설정으로 새 plot을 시작합니다.`);
 }
@@ -1915,6 +1960,7 @@ function syncPlotSelectionToAdsChannels() {
 }
 
 function resetLiveStream(reason = "") {
+  state.datasetContext = null;
   appendStreamText.buffer = "";
   state.streamHeaders = null;
   state.streamRows = [];
@@ -1942,6 +1988,7 @@ function resetLiveStream(reason = "") {
 }
 
 function clearLoadedFile(reason = "파일 A를 내렸습니다.") {
+  state.datasetContext = null;
   const input = $("fileInput");
   if (input) input.value = "";
   state.zip = null;
@@ -2029,15 +2076,30 @@ function renderAdsRegisterMap() {
   if (!body) return;
   body.innerHTML = adsRegisters.map(reg => {
     const value = adsRegisterValues[reg.addr];
+    const expected = adsExpectedRegisters[reg.addr], applied = adsAppliedRegisters[reg.addr];
+    const verdict = !Number.isFinite(value) ? "미확인" : !Number.isFinite(expected) ? "읽음" : value === expected ? "일치" : "불일치";
     return `
       <tr>
         <td class="regValue">${hexAddr(reg.addr)}</td>
         <td><strong>${reg.name}</strong></td>
+        <td class="regValue">${Number.isFinite(expected) ? hexByte(expected) : "--"}</td>
+        <td class="regValue">${Number.isFinite(applied) ? hexByte(applied) : "--"}</td>
         <td class="regValue">${Number.isFinite(value) ? hexByte(value) : "--"}</td>
+        <td title="${adsRegisterTimes[reg.addr] || ''}">${verdict}</td>
         <td class="regHint">${reg.role}</td>
       </tr>
     `;
   }).join("");
+  const requestedGains = [], actualGains = [];
+  adsChannelRows().forEach(row => {
+    const n = Number(row.dataset.adsCh), value = adsRegisterValues[n + 4];
+    const actual = SignalCore.gainFromRegister(value), requested = Number(row.querySelector('.ads-ch-gain').value);
+    const cell = row.querySelector('.ads-ch-readback');
+    if (cell) cell.textContent = Number.isFinite(actual) ? `${actual} (${hexByte(value)})${actual !== requested ? ' 불일치' : ''}` : '미확인';
+    if (row.querySelector('.ads-ch-enable').checked) { requestedGains.push(requested); actualGains.push(actual); }
+  });
+  const gainLabel = values => !values.length || values.some(g => !Number.isFinite(g)) ? '미확인' : values.every(g => g === values[0]) ? String(values[0]) : `MIXED (${[...new Set(values)].join(', ')})`;
+  setText('adsGainSummary', `활성 채널 요청 Gain: ${gainLabel(requestedGains)} / 실제 Gain: ${gainLabel(actualGains)}. 복사는 표만 변경하며, 채널 설정 적용 후 readback으로 확인합니다.`);
   renderAdsDecoded();
   renderLeadOffStatus();
 }
@@ -2109,27 +2171,27 @@ function rememberManualRegisterWrite(addrText, valueText) {
   const addr = Number.parseInt(String(addrText).replace(/^0x/i, ""), 16);
   const value = Number.parseInt(String(valueText).replace(/^0x/i, ""), 16);
   if (Number.isFinite(addr) && Number.isFinite(value)) {
-    adsRegisterValues[addr] = value;
+    adsExpectedRegisters[addr] = value;
     renderAdsRegisterMap();
   }
 }
 
 function updateAdsRegisterValueFromLine(line) {
   const text = String(line).trim();
+  handleCommandResponse(text);
   if (/^FW STATE\b/i.test(text)) {
     const rateLine = /\bRATE=(\d+)/i.exec(text);
     const gainLine = /\bGAIN=(\d+)/i.exec(text);
     const rate = Number(rateLine?.[1]);
     const gain = Number(gainLine?.[1]);
+    const vref = /\bVREF_MV=(\d+)/i.exec(text);
+    if (vref) state.hardwareVrefVolts = Number(vref[1]) / 1000;
     if (Number.isFinite(rate) && rate > 0) {
       state.adsAppliedRate = rate;
-      if ($("adsRate")) $("adsRate").value = String(rate);
     }
     if (Number.isFinite(gain) && gain > 0) {
       state.adsAppliedGain = gain;
-      if ($("adsGain")) $("adsGain").value = String(gain);
     }
-    updateAdsChannelPreview();
   }
   if (!/^REG\b/i.test(text)) return;
   const idLine = /^REG\s+ID\s+(?:0x)?([0-9a-f]{1,2})/i.exec(text);
@@ -2140,17 +2202,20 @@ function updateAdsRegisterValueFromLine(line) {
   if (single) {
     const addr = Number.parseInt(single[1], 16);
     const value = Number.parseInt(single[2], 16);
-    if (Number.isFinite(addr) && Number.isFinite(value)) adsRegisterValues[addr] = value;
+    if (Number.isFinite(addr) && Number.isFinite(value)) {
+      adsRegisterValues[addr] = value;
+      adsRegisterTimes[addr] = new Date().toISOString();
+    }
   }
-  const pairs = [...text.matchAll(/(?:0x)?([0-9a-f]{1,2})\s*[:= ]\s*(?:0x)?([0-9a-f]{1,2})/gi)];
+  const pairs = [...text.matchAll(/\b0x([0-9a-f]{1,2})\s*[:=]\s*0x([0-9a-f]{1,2})\b/gi)];
   pairs.forEach(match => {
     const addr = Number.parseInt(match[1], 16);
     const value = Number.parseInt(match[2], 16);
-    if (Number.isFinite(addr) && Number.isFinite(value)) adsRegisterValues[addr] = value;
+    if (Number.isFinite(addr) && Number.isFinite(value)) { adsRegisterValues[addr] = value; adsRegisterTimes[addr] = new Date().toISOString(); }
   });
   adsRegisters.forEach(reg => {
     const byName = new RegExp(`${reg.name}\\s*[:=]\\s*(?:0x)?([0-9a-f]{1,2})`, "i").exec(text);
-    if (byName) adsRegisterValues[reg.addr] = Number.parseInt(byName[1], 16);
+    if (byName) { adsRegisterValues[reg.addr] = Number.parseInt(byName[1], 16); adsRegisterTimes[reg.addr] = new Date().toISOString(); }
   });
   renderAdsRegisterMap();
   const configSummary = /ID\s*=\s*(?:0x)?([0-9a-f]{1,2}).*CONFIG1\s*=\s*(?:0x)?([0-9a-f]{1,2}).*CONFIG2\s*=\s*(?:0x)?([0-9a-f]{1,2}).*CONFIG3\s*=\s*(?:0x)?([0-9a-f]{1,2})/i.exec(text);
@@ -2209,14 +2274,23 @@ function updateEegStatus() {
 }
 
 function gainForChannel(channelName) {
-  const channel = Number(String(channelName).replace(/^ch/i, ""));
-  const row = adsChannelRows().find(candidate => Number(candidate.dataset.adsCh) === channel);
-  return Math.max(1, Number(row?.querySelector(".ads-ch-gain")?.value) || Number($("adsGain")?.value) || 24);
+  return SignalCore.gainFromRegister(adsRegisterValues[4 + Number(String(channelName).replace(/^ch/i, ""))]);
 }
 
-function adsLsbMicrovolts(gain = Number($("adsGain")?.value) || 24) {
-  const vref = Math.max(0.1, Math.min(10, Number($("adsVrefVolts")?.value) || 4.5));
-  return vref * 1e6 / Math.max(1, Number(gain) || 24) / 8388607;
+function adsLsbMicrovolts(gain) {
+  return SignalCore.lsb(gain, state.hardwareVrefVolts);
+}
+
+function liveMeasurementContext() {
+  const metadata = {metadata_schema_version: '2', adc_vref_volts: state.hardwareVrefVolts,
+    requested_sps: Number.isFinite(adsRegisterValues[1]) ? adsRateByBits[adsRegisterValues[1] & 7] : state.adsAppliedRate, timestamp_basis: 'device_read_elapsed_us'};
+  for (let n = 1; n <= 8; n++) if (Number.isFinite(adsRegisterValues[n + 4])) metadata[`channel_${n}_chnset_readback`] = adsRegisterValues[n + 4];
+  return SignalCore.context(metadata, Array.from({length: 8}, (_, i) => `ch${i + 1}`));
+}
+
+function measurementContext() { return state.datasetContext || liveMeasurementContext(); }
+function analysisValues(raw, channel, ctx = measurementContext()) {
+  return /^ch[1-8]$/i.test(channel) ? raw.map(x => SignalCore.microvolts(x, ctx, channel)) : raw.slice();
 }
 
 function rawToMicrovolts(raw, gain) {
@@ -2230,9 +2304,10 @@ function liveChannelStats(rows = state.streamRows, channels = state.streamHeader
     if (values.length < 2) return { ch, samples: values.length, mean: NaN, rms: NaN, p2p: NaN };
     const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
     const centered = values.map(v => v - mean);
-    const rms = Math.sqrt(centered.reduce((sum, v) => sum + v * v, 0) / centered.length);
+    const acRms = Math.sqrt(centered.reduce((sum, v) => sum + v * v, 0) / centered.length);
+    const rms = Math.sqrt(values.reduce((sum, v) => sum + v * v, 0) / values.length);
     const p2p = Math.max(...values) - Math.min(...values);
-    return { ch, samples: values.length, mean, rms, p2p };
+    return { ch, samples: values.length, mean, rms, acRms, p2p };
   });
 }
 
@@ -2251,7 +2326,7 @@ function renderLiveChannelStats() {
     const gain = gainForChannel(s.ch);
     const p2p = Number.isFinite(s.p2p) ? `${s.p2p.toFixed(0)} / ${rawToMicrovolts(s.p2p, gain).toFixed(2)} µV` : "-";
     const rms = Number.isFinite(s.rms) ? `${s.rms.toFixed(0)} / ${rawToMicrovolts(s.rms, gain).toFixed(2)} µV` : "-";
-    return `<div class="liveChip ${hot ? "hot" : ""}"><strong><span>${escapeHtml(s.ch)}</span><span>${hot ? "MAX" : ""}</span></strong>P2P ${p2p}<br>RMS ${rms}</div>`;
+    return `<div class="liveChip ${hot ? "hot" : ""}"><strong><span>${escapeHtml(s.ch)}</span><span>${hot ? "MAX" : ""}</span></strong>P2P ${p2p}<br>RMS (DC 포함) ${rms}<br>AC RMS ${rawToMicrovolts(s.acRms, gain).toFixed(2)} µV<br>DC ${rawToMicrovolts(s.mean, gain).toFixed(2)} µV</div>`;
   }).join("");
 }
 
@@ -2342,7 +2417,7 @@ function parseCsv(text) {
     headers.forEach((h, i) => obj[h] = Number.parseFloat(r[i]));
     return obj;
   });
-  return { headers, rows: data };
+  return { headers, rows: data, metadata: SignalCore.metadata(text) };
 }
 
 function detectChannels(headers) {
@@ -2413,6 +2488,7 @@ function estimateFs(rows, timeCol, fallback) {
 }
 
 function loadDataset(headers, rows, name, options = {}) {
+  state.datasetContext = SignalCore.context(options.metadata || {}, headers);
   const previousSelected = new Set(state.selected || []);
   state.headers = headers;
   state.rows = rows.filter(r => Object.values(r).some(Number.isFinite));
@@ -2431,17 +2507,18 @@ function loadDataset(headers, rows, name, options = {}) {
   const timeOptions = timeColumnOptions(headers);
   const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
   fillSelectIfChanged($("timeColumn"), timeOptions, selectedTime, timeColumnLabel);
-  const fs = estimateFs(state.rows, selectedTime, Number($("fsInput").value) || 250);
+  const fs = state.datasetContext.requestedSps || estimateFs(state.rows, selectedTime, Number($("fsInput").value) || 250);
   $("fsInput").value = fs;
   buildConditions();
   renderChannels();
   analyze();
   if (!options.silent) {
-    status(`${name}\n${datasetHint(headers)}\n탐지 채널 ${state.channels.length}개, fs 추정 ${fs} Hz`);
+    status(`${name}\n${datasetHint(headers)}\n탐지 채널 ${state.channels.length}개, fs 추정 ${fs} Hz\n${state.datasetContext.warnings.join('\n')}`);
   }
 }
 
 function refreshLivePlot(source) {
+  state.datasetContext = null;
   const rows = state.streamRows.slice(-livePlotRows());
   const headers = state.streamHeaders || [];
   const previousSelected = new Set(state.selected || []);
@@ -2460,7 +2537,7 @@ function refreshLivePlot(source) {
   const timeOptions = timeColumnOptions(headers);
   const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
   fillSelectIfChanged($("timeColumn"), timeOptions, selectedTime, timeColumnLabel);
-  const fs = estimateFs(rows, selectedTime, Number($("fsInput").value) || 250);
+  const fs = liveMeasurementContext().requestedSps || estimateFs(rows, selectedTime, Number($("fsInput").value) || 250);
   $("fsInput").value = fs;
   const selected = [...state.selected].filter(ch => state.channels.includes(ch));
   const data = {};
@@ -2473,8 +2550,8 @@ function refreshLivePlot(source) {
     filtered[ch] = state.view === "filtered" || fullAnalysis ? filterSignal(data[ch], fs, ch) : data[ch];
     if (fullAnalysis) {
       const maxFreq = Math.min(Number($("maxFreqInput").value) || 45, fs / 2);
-      psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= maxFreq);
-      ffts[ch] = spectrum(filtered[ch], fs).filter(d => d.f <= maxFreq);
+      psds[ch] = welch(analysisValues(filtered[ch], ch), fs).filter(d => d.f <= maxFreq);
+      ffts[ch] = spectrum(analysisValues(filtered[ch], ch), fs).filter(d => d.f <= maxFreq);
     }
   });
   const avgPsd = averageCurves(Object.values(psds));
@@ -2539,6 +2616,7 @@ function sliceRows() {
 
 function datasetView() {
   return {
+    context: measurementContext(),
     rows: state.rows,
     headers: state.headers,
     channels: state.channels,
@@ -2770,38 +2848,26 @@ function fft(re, im) {
 }
 
 function spectrum(xs, fs) {
+  if (xs.length < 2 || xs.some(x => !Number.isFinite(x))) return [];
   const n = nextPow2(Math.min(xs.length, 8192));
   const src = demean(xs.slice(0, n));
   const re = new Array(n).fill(0), im = new Array(n).fill(0);
+  let windowSum = 0;
   for (let i = 0; i < src.length; i++) {
     const win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (src.length - 1));
     re[i] = src[i] * win;
+    windowSum += win;
   }
   fft(re, im);
   const out = [];
   for (let k = 1; k < n / 2; k++) {
-    out.push({ f: k * fs / n, y: Math.hypot(re[k], im[k]) / n });
+    out.push({ f: k * fs / n, y: 2 * Math.hypot(re[k], im[k]) / windowSum });
   }
   return out;
 }
 
 function welch(xs, fs) {
-  const seg = Math.min(1024, nextPow2(Math.max(64, Math.floor(xs.length / 4))));
-  const step = Math.floor(seg / 2);
-  const bins = new Array(seg / 2).fill(0);
-  let count = 0;
-  for (let start = 0; start + seg <= xs.length; start += step) {
-    const part = demean(xs.slice(start, start + seg));
-    const re = new Array(seg).fill(0), im = new Array(seg).fill(0);
-    for (let i = 0; i < seg; i++) {
-      const win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (seg - 1));
-      re[i] = part[i] * win;
-    }
-    fft(re, im);
-    for (let k = 1; k < seg / 2; k++) bins[k] += (re[k] * re[k] + im[k] * im[k]) / (fs * seg);
-    count++;
-  }
-  return bins.slice(1).map((v, i) => ({ f: (i + 1) * fs / seg, y: count ? v / count : 0 }));
+  return SignalCore.welch(xs, fs);
 }
 
 function bandPowers(psd) {
@@ -2835,8 +2901,8 @@ function analyze() {
     data[ch] = xs;
     filtered[ch] = filterSignal(xs, fs, state.streamRows.includes(rows[0]) ? ch : null);
     const maxFreq = Math.min(Number($("maxFreqInput").value) || 45, fs / 2);
-    psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= maxFreq);
-    ffts[ch] = spectrum(filtered[ch], fs).filter(d => d.f <= maxFreq);
+    psds[ch] = welch(analysisValues(filtered[ch], ch), fs).filter(d => d.f <= maxFreq);
+    ffts[ch] = spectrum(analysisValues(filtered[ch], ch), fs).filter(d => d.f <= maxFreq);
   });
   const avgPsd = averageCurves(Object.values(psds));
   state.lastAnalysis = { rows, fs, timeCol, selected, data, filtered, psds, ffts, avgPsd, powers: bandPowers(avgPsd) };
@@ -2846,13 +2912,13 @@ function analyze() {
   draw();
 }
 
-function analyzeRows(rows, fs, selected) {
+function analyzeRows(rows, fs, selected, context) {
   const filtered = {};
   const psds = {};
   selected.forEach(ch => {
     const xs = valuesFor(rows, ch);
     filtered[ch] = filterSignal(xs, fs);
-    psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= Math.min(Number($("maxFreqInput").value) || 45, fs / 2));
+    psds[ch] = welch(analysisValues(filtered[ch], ch, context), fs).filter(d => d.f <= Math.min(Number($("maxFreqInput").value) || 45, fs / 2));
   });
   const avgPsd = averageCurves(Object.values(psds));
   return { rows, psds, avgPsd, powers: bandPowers(avgPsd) };
@@ -2878,8 +2944,8 @@ function buildCompare() {
     condB,
     sourceA: datasetA.sourceName,
     sourceB: datasetB.sourceName,
-    a: analyzeRows(rowsA, fs, selected),
-    b: analyzeRows(rowsB, datasetB.fs || fs, selected),
+    a: analyzeRows(rowsA, fs, selected, datasetA.context),
+    b: analyzeRows(rowsB, datasetB.fs || fs, selected, datasetB.context),
     fs,
     selected
   };
@@ -2950,6 +3016,12 @@ function setupCanvas(canvas) {
 }
 
 function draw() {
+  $("validationPanel").classList.toggle('hidden', state.view !== 'validation');
+  const measurement = measurementContext();
+  setText('measurementSettings', state.channels.filter(ch => /^ch[1-8]$/.test(ch)).map(ch => {
+    const info = measurement.channels[ch];
+    return `${ch}: Gain ${info?.gain || '미확인'}, VREF ${measurement.vref || '미확인'} V, LSB ${Number.isFinite(info?.lsb) ? info.lsb.toFixed(9) : '미확인'} µV/count (${info?.source || '미확인'})`;
+  }).join('\n') + (measurement.warnings.length ? '\n' + measurement.warnings.join('\n') : ''));
   const canvas = $("plot");
   const { ctx, w, h } = setupCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
@@ -2985,22 +3057,23 @@ function renderChannelMiniPlots() {
   const channels = a.selected.slice(0, 8);
   el.innerHTML = "";
   channels.forEach((ch, idx) => {
-    const xs = a.data[ch] || [];
+    const raw = a.data[ch] || [];
+    const xs = $("signalUnit")?.value === 'uv' ? analysisValues(raw, ch) : raw;
     const card = document.createElement("div");
     card.className = "channelMini";
     card.innerHTML = `
       <div class="channelMiniTitle">
         <strong>${escapeHtml(ch)}</strong>
-        <span>${xs.length.toLocaleString()} samples</span>
+        <span>${xs.length.toLocaleString()} samples · ${$("signalUnit")?.value === 'uv' ? 'µV' : 'counts'}</span>
       </div>
       <canvas aria-label="${escapeHtml(ch)} channel raw plot"></canvas>
     `;
     el.appendChild(card);
-    drawMiniChannelPlot(card.querySelector("canvas"), xs, idx);
+    drawMiniChannelPlot(card.querySelector("canvas"), xs, idx, a);
   });
 }
 
-function drawMiniChannelPlot(canvas, xs, idx) {
+function drawMiniChannelPlot(canvas, xs, idx, analysis) {
   const { ctx, w, h } = setupCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#ffffff";
@@ -3028,18 +3101,26 @@ function drawMiniChannelPlot(canvas, xs, idx) {
   const compact = [];
   for (let i = 0; i < xs.length; i += step) compact.push(xs[i]);
   const finite = compact.filter(Number.isFinite);
-  const mean = finite.reduce((s, v) => s + v, 0) / Math.max(1, finite.length);
-  const centered = compact.map(v => Number.isFinite(v) ? v : 0); // raw mini-plots keep DC too
-  const maxAbs = Math.max(...centered.map(v => Math.abs(v))) || 1;
+  if (!finite.length) { drawEmpty(ctx, w, h, 'Gain/VREF 미확인'); return; }
+  const centered = compact; // raw mini-plots keep DC and invalid/gap positions
+  const maxAbs = Math.max(...finite.map(v => Math.abs(v))) || 1;
   const colors = ["#2563eb", "#0f766e", "#b42318", "#7c3aed", "#ea580c", "#0891b2", "#4d7c0f", "#be185d"];
   ctx.strokeStyle = colors[idx % colors.length];
   ctx.lineWidth = 1.2;
   ctx.beginPath();
+  const times = analysis?.rows.map(row => Number(row[analysis.timeCol])) || [];
+  const span = times.at(-1) - times[0];
+  const useTimes = span > 0 && times.every(Number.isFinite);
+  let penDown = false;
   centered.forEach((v, i) => {
-    const x = pad.l + i / Math.max(1, centered.length - 1) * pw;
+    if (!Number.isFinite(v)) { penDown = false; return; }
+    const sample = i * step;
+    const x = pad.l + (useTimes ? (times[sample] - times[0]) / span : i / Math.max(1, centered.length - 1)) * pw;
     const y = pad.t + ph / 2 - (v / maxAbs) * ph * 0.42;
-    if (i === 0) ctx.moveTo(x, y);
+    const gap = useTimes && i > 0 && (times[sample] - times[sample - step]) * timeColumnScaleToSeconds(analysis.timeCol) > 1.8 * step / analysis.fs;
+    if (!penDown || gap) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
+    penDown = true;
   });
   ctx.stroke();
   ctx.fillStyle = "#667085";
@@ -3079,9 +3160,10 @@ function drawAxes(ctx, x, y, w, h) {
 }
 
 function drawSignals(ctx, w, h, a, series) {
-  $("plotTitle").textContent = state.view === "raw" ? "Raw EEG" : "Filtered EEG";
+  $("plotTitle").textContent = state.view === "filtered" ? "Filtered EEG" : "Raw EEG";
   const liveText = state.streamHeaders ? ` · 최근 ${$("liveWindowSec")?.value || 4}s 표시` : "";
-  $("plotSub").textContent = `${state.sourceName} · ${adsInputModeLabel()} · ${a.selected.join(", ")}${liveText}`;
+  const unit = $("signalUnit")?.value === 'uv' ? 'µV (input-referred)' : 'ADC counts';
+  $("plotSub").textContent = `${state.sourceName} · ${unit} · ${a.selected.join(", ")}${liveText}`;
   const pad = { l: 82, r: 20, t: 28, b: 36 };
   const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
   drawAxes(ctx, pad.l, pad.t, pw, ph);
@@ -3091,13 +3173,15 @@ function drawSignals(ctx, w, h, a, series) {
   const fixedMode = $("plotScaleMode")?.value === "fixed";
   const laneGain = Math.max(0.15, Math.min(0.46, Number($("plotChannelSpacing")?.value) || 0.32));
   a.selected.forEach((ch, idx) => {
-    const xs = series[ch] || [];
+    const raw = series[ch] || [];
+    const xs = $("signalUnit")?.value === 'uv' ? analysisValues(raw, ch) : raw;
     if (xs.length < 2) return;
     const laneH = ph / lanes;
     const base = pad.t + laneH * (idx + 0.5);
     const finite = xs.filter(Number.isFinite);
     const mean = finite.reduce((sum, v) => sum + v, 0) / Math.max(1, finite.length);
-    const centered = xs.map(v => Number.isFinite(v) ? v - (state.view === "raw" ? 0 : mean) : NaN);
+    if (!finite.length) { ctx.fillText(`${ch}: Gain/VREF 미확인`, pad.l, base); return; }
+    const centered = xs.map(v => Number.isFinite(v) ? v - (state.view === "filtered" ? mean : 0) : NaN);
     const maxAbs = fixedMode ? fixedScale : (Math.max(...centered.filter(Number.isFinite).map(v => Math.abs(v))) || 1);
     ctx.strokeStyle = "#eef2f6";
     ctx.lineWidth = 1;
@@ -3184,7 +3268,7 @@ function drawSpectral(ctx, w, h, a, mode) {
   const maxF = Math.min(Number($("maxFreqInput").value) || 45, a.fs / 2);
   const normalize = $("normalizeSpectra").checked;
   const curveToDb = curve => {
-    const raw = curve.map(d => 10 * Math.log10(Math.max(d.y, 1e-18)));
+    const raw = curve.map(d => (mode === 'fft' ? 20 : 10) * Math.log10(Math.max(d.y, 1e-18)));
     if (!normalize) return raw;
     const peak = Math.max(...raw.filter(Number.isFinite));
     return raw.map(v => v - peak);
@@ -3223,7 +3307,7 @@ function drawSpectral(ctx, w, h, a, mode) {
   ctx.save();
   ctx.translate(14, pad.t + ph / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText(normalize ? "Power (dB from channel peak)" : "Power (dB)", 0, 0);
+  ctx.fillText(normalize ? "dB from channel peak" : mode === 'fft' ? "dB re 1 µV (peak)" : "dB re 1 µV²/Hz", 0, 0);
   ctx.restore();
 }
 
@@ -3374,7 +3458,7 @@ async function handleFile(file) {
     status(`${file.name}\nCSV에서 헤더/샘플을 찾지 못했습니다. ADS1299 저장 CSV라면 t_us,ch1 형식의 헤더가 필요합니다.`);
     return;
   }
-  loadDataset(parsed.headers, parsed.rows, file.name);
+  loadDataset(parsed.headers, parsed.rows, file.name, {metadata: parsed.metadata});
   maybeAutoLoadLabels(file.name);
 }
 
@@ -3435,7 +3519,7 @@ async function loadClareSelected() {
     return;
   }
   const parsed = parseCsv(json.csv);
-  loadDataset(parsed.headers, parsed.rows, `${item.participant}/${item.file}`);
+  loadDataset(parsed.headers, parsed.rows, `${item.participant}/${item.file}`, {metadata: parsed.metadata});
   await maybeAutoLoadLabels(`${item.participant}/${item.file}`);
 }
 
@@ -3457,8 +3541,8 @@ async function handleCompareFile(file) {
   const timeCol = detectTimeColumn(headers);
   const timeOptions = timeColumnOptions(headers);
   const selectedTime = timeOptions.includes(timeCol) ? timeCol : "__sample_index__";
-  const fs = estimateFs(rows, selectedTime, Number($("fsInput").value) || 250);
-  state.compareDataset = { headers, rows, channels, timeCol: selectedTime, fs, sourceName: file.name };
+  const fs = SignalCore.context(parsed.metadata, headers).requestedSps || estimateFs(rows, selectedTime, Number($("fsInput").value) || 250);
+  state.compareDataset = { headers, rows, channels, timeCol: selectedTime, fs, sourceName: file.name, context: SignalCore.context(parsed.metadata, headers) };
   const common = state.channels.filter(ch => channels.includes(ch));
   if (common.length) {
     state.selected = new Set(common.slice(0, Math.min(8, common.length)));
@@ -3473,7 +3557,7 @@ async function loadZipEntry(name) {
   if (!state.zip || !name) return;
   const text = await state.zip.file(name).async("text");
   const parsed = parseCsv(text);
-  loadDataset(parsed.headers, parsed.rows, name);
+  loadDataset(parsed.headers, parsed.rows, name, {metadata: parsed.metadata});
   maybeAutoLoadLabels(name);
 }
 
@@ -3535,6 +3619,7 @@ async function connectBle() {
     optionalServices: [service]
   });
   device.addEventListener("gattserverdisconnected", () => {
+    state.pendingCommand?.reject(new Error('BLE 연결 해제'));
     state.bleDevice = null;
     state.bleRxCharacteristic = null;
     state.bleTxCharacteristic = null;
@@ -3553,6 +3638,10 @@ async function connectBle() {
   state.bleDevice = device;
   state.bleTxCharacteristic = ch;
   state.bleRxCharacteristic = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
+  state.commandFault = false;
+  for (const map of [adsRegisterValues, adsRegisterTimes, adsAppliedRegisters]) for (const key of Object.keys(map)) delete map[key];
+  state.hardwareVrefVolts = NaN;
+  state.datasetContext = null;
   state.streamStartedAt = performance.now();
   state.streamStoppedAt = 0;
   state.streamHeaders = null;
@@ -3574,7 +3663,7 @@ async function sendAds1299Command(command) {
   const line = command.trim();
   if (!line) return;
   setText("cmdState", "전송 중");
-  await writeBleCommandLine(line);
+  await queueAdsCommands([line]);
   setText("cmdState", "준비됨");
   status(`명령 전송됨:\n${line}`);
 }
@@ -3630,12 +3719,71 @@ async function sendAds1299Commands(commands) {
     throw new Error("BLE가 연결되지 않았습니다. 먼저 BLE 버튼으로 보드에 연결하세요.");
   }
   setText("cmdState", "전송 중");
-  for (const line of lines) {
-    await writeBleCommandLine(line);
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
+  await queueAdsCommands(lines);
   setText("cmdState", "준비됨");
   status(`명령 ${lines.length}개 전송됨:\n${lines.join("\n")}`);
+}
+
+function handleCommandResponse(text) {
+  const pending = state.pendingCommand;
+  if (!pending) return;
+  if (/^ERR\b/.test(text)) { pending.reject(new Error(`${pending.line}: ${text}`)); return; }
+  if (pending.allRegisters) {
+    const match = /^REG 0x([\dA-F]{2}) 0x[\dA-F]{2}$/i.exec(text);
+    if (match) pending.seen.add(Number.parseInt(match[1], 16));
+    if (pending.seen.size === 24) pending.resolve();
+  } else if (pending.match.test(text)) pending.resolve();
+}
+
+function queueAdsCommands(lines) {
+  state.commandJobs++;
+  const run = async () => {
+    if (state.commandFault) throw new Error('이전 명령의 응답이 불확실합니다. BLE를 다시 연결한 뒤 설정을 적용하세요.');
+    for (const line of lines) {
+      if (line === 'ADS1299 START') {
+        const absent = Array.from({length:8}, (_, i) => i + 5).filter(addr => !Number.isFinite(adsRegisterValues[addr]));
+        const mismatched = Object.entries(adsAppliedRegisters).filter(([addr, value]) => adsRegisterValues[addr] !== value);
+        if (absent.length || mismatched.length) throw new Error('Start 중단: 채널 readback 미확인 또는 ACK/readback 불일치. Read Regs와 Register Map을 확인하세요.');
+      }
+      const mutation = /^ADS1299 (?:INIT|RESET|CONFIG|WREG|CHANNELS|STREAM|START|TEST|SPI|BITBANG)\b/i.test(line);
+      if (state.recording && (mutation || /^ADS1299 RREG\b/.test(line))) throw new Error('먼저 저장 멈춤을 누르세요. 설정 변경/레지스터 읽기는 녹화 사이에 실행하세요.');
+      const wreg = /^ADS1299 WREG\s+(0x[\da-f]+)\s+(0x[\da-f]+)$/i.exec(line);
+      if (mutation && !/^ADS1299 START$/.test(line)) {
+        state.configRevision++;
+        state.streamRows = []; // never export old rows under a new configuration
+        if (wreg) { delete adsRegisterValues[Number(wreg[1])]; delete adsRegisterTimes[Number(wreg[1])]; delete adsAppliedRegisters[Number(wreg[1])]; }
+        else if (/^ADS1299 (?:INIT|RESET|CONFIG|CHANNELS|TEST)\b/.test(line)) {
+          for (const map of [adsRegisterValues, adsRegisterTimes, adsAppliedRegisters]) for (const key of Object.keys(map)) delete map[key];
+          state.hardwareVrefVolts = NaN;
+        }
+      }
+      const allRegisters = line === 'ADS1299 RREG ALL';
+      const read = /^ADS1299 RREG\s+(0x[\da-f]+|ID)$/i.exec(line);
+      const verb = /^ADS1299 (INIT|CONFIG|WREG|STOP|START|STREAM|CHANNELS)\b/.exec(line)?.[1];
+      const match = read ? new RegExp(`^REG ${read[1]}\\b`, 'i') : verb ? new RegExp(`^OK ${verb}\\b`) : null;
+      if (allRegisters) { for (const key of Object.keys(adsRegisterValues)) delete adsRegisterValues[key]; }
+      if (match || allRegisters) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            state.commandFault = true;
+            finish(new Error(`${line}: 응답 시간 초과. BLE 재연결 후 설정을 다시 적용하세요.`));
+          }, 7000);
+          const finish = error => { clearTimeout(timer); state.pendingCommand = null; error ? reject(error) : resolve(); };
+          state.pendingCommand = {line, match, allRegisters, seen: new Set(), resolve: () => finish(), reject: finish};
+          writeBleCommandLine(line).catch(finish);
+        });
+        if (wreg) adsAppliedRegisters[Number(wreg[1])] = Number(wreg[2]);
+        if (verb === 'CONFIG') {
+          const mv = /\bVREF_MV=(\d+)/.exec(line);
+          state.hardwareVrefVolts = mv ? Number(mv[1]) / 1000 : NaN;
+        }
+      } else await writeBleCommandLine(line);
+      renderAdsRegisterMap();
+    }
+  };
+  const result = state.commandChain.then(run).finally(() => { state.commandJobs--; });
+  state.commandChain = result.catch(() => {});
+  return result;
 }
 
 function adsConfigCommand() {
@@ -3702,7 +3850,7 @@ function inputShortCalibrationCommands() {
     const gain = (adsGainBits[row.querySelector(".ads-ch-gain").value] ?? 0b110) << 4;
     commands.push(`ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte((enabled ? 0 : 0x80) | gain | adsMuxBits.SHORTED)}`);
   });
-  commands.push("ADS1299 WREG 0x0D 0x00", "ADS1299 WREG 0x0E 0x00", `ADS1299 STREAM MASK=${mask}`);
+  commands.push("ADS1299 WREG 0x0D 0x00", "ADS1299 WREG 0x0E 0x00", `ADS1299 STREAM MASK=${mask}`, "ADS1299 RREG ALL");
   return commands;
 }
 
@@ -4000,31 +4148,42 @@ function actualSavedRate(headers, rows) {
 }
 
 function adsSettingsSnapshot() {
-  const channelGains = adsChannelRows()
-    .map(row => `ch${row.dataset.adsCh}:${row.querySelector(".ads-ch-gain").value}`)
-    .join(" ");
-  const channelRegisters = adsChannelRows()
-    .map((row, idx) => `CH${idx + 1}SET=${hexByte(chSetValue(row))}`)
-    .join(" ");
+  const context = liveMeasurementContext();
+  const channelGains = Object.entries(context.channels).map(([ch, value]) => `${ch}:${Number.isFinite(value.gain) ? value.gain : 'UNKNOWN'}`).join(' ');
+  const channelRegisters = Array.from({length: 8}, (_, i) => `CH${i + 1}SET=${Number.isFinite(adsRegisterValues[5 + i]) ? hexByte(adsRegisterValues[5 + i]) : 'UNKNOWN'}`).join(' ');
+  const activeGains = (state.streamHeaders || []).filter(ch => /^ch[1-8]$/.test(ch)).map(ch => context.channels[ch]?.gain);
+  const commonGain = activeGains.length && activeGains.every(g => Number.isFinite(g) && g === activeGains[0]) ? activeGains[0] : 'MIXED_OR_UNKNOWN';
+  const channelNumbers = (state.streamHeaders || []).filter(ch => /^ch[1-8]$/.test(ch)).map(ch => Number(ch.slice(2)));
+  const muxes = channelNumbers.map(n => decodeChannelMux(adsRegisterValues[n + 4]));
+  const readBit = (address, position, yes = 'ON', no = 'OFF') => Number.isFinite(adsRegisterValues[address]) ? (bit(adsRegisterValues[address], position) ? yes : no) : 'UNKNOWN';
+  const actualTestMask = channelNumbers.reduce((mask, n) => decodeChannelMux(adsRegisterValues[n + 4]) === 'TEST' ? mask | (1 << (n - 1)) : mask, 0);
   return {
-    rate: state.adsAppliedRate || Number($("adsRate")?.value) || "",
-    gain: state.adsAppliedGain || Number($("adsGain")?.value) || "",
-    mux: $("adsMux")?.value || "",
-    reference: $("adsRef")?.value || "",
-    referenceChannel: $("adsRefChannel")?.value || "",
-    adcReference: $("adsAdcRef")?.value || "",
-    vrefVolts: Number($("adsVrefVolts")?.value) || 4.5,
-    lsbMicrovolts: adsLsbMicrovolts(),
-    channelMask: adsChannelMaskHex(),
-    bias: $("adsBiasOn")?.checked ? "ON" : "OFF",
-    biasReference: $("adsBiasRef")?.value || "",
-    biasSensp: hexByte($("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasp") : 0),
-    biasSensn: hexByte($("adsBiasOn")?.checked ? maskFromSelector(".ads-ch-biasn") : 0),
-    leadOff: $("adsLoffOn")?.checked ? "ON" : "OFF",
-    test: testChannelMask() ? "ON" : "OFF",
-    testAmplitude: $("adsTestAmp")?.value || "1X",
-    testFrequency: $("adsTestFreq")?.value || "SLOW",
-    testMask: hexByte(testChannelMask()),
+    rate: context.requestedSps || "UNKNOWN",
+    gain: commonGain,
+    requestedGlobalGain: $("adsGain")?.value || '',
+    requestedSps: $("adsRate")?.value || '',
+    context,
+    configRevision: state.configRevision,
+    registers: {...adsRegisterValues},
+    registerTimes: {...adsRegisterTimes},
+    requestedRegisters: {...adsExpectedRegisters},
+    appliedRegisters: {...adsAppliedRegisters},
+    mux: muxes.length && muxes.every(m => m === muxes[0]) ? muxes[0] : 'MIXED_OR_UNKNOWN',
+    reference: readBit(0x15, 5, 'SRB1_ON', 'SRB1_OFF_SEE_CHANNEL_SRB2'),
+    referenceChannel: 'SEE_CHnSET_AND_PHYSICAL_WIRING',
+    adcReference: readBit(0x03, 7, 'INTERNAL', 'EXTERNAL'),
+    vrefVolts: state.hardwareVrefVolts,
+    lsbMicrovolts: adsLsbMicrovolts(commonGain),
+    channelMask: hexByte(channelNumbers.reduce((mask, n) => mask | (1 << (n - 1)), 0)),
+    bias: readBit(0x03, 2),
+    biasReference: readBit(0x03, 3, 'INTERNAL', 'EXTERNAL'),
+    biasSensp: Number.isFinite(adsRegisterValues[0x0D]) ? hexByte(adsRegisterValues[0x0D]) : 'UNKNOWN',
+    biasSensn: Number.isFinite(adsRegisterValues[0x0E]) ? hexByte(adsRegisterValues[0x0E]) : 'UNKNOWN',
+    leadOff: readBit(0x17, 1),
+    test: readBit(0x02, 4),
+    testAmplitude: readBit(0x02, 2, '2X', '1X'),
+    testFrequency: Number.isFinite(adsRegisterValues[2]) ? ({0:'SLOW',1:'FAST',3:'DC'}[adsRegisterValues[2] & 3] || 'RESERVED') : 'UNKNOWN',
+    testMask: hexByte(actualTestMask),
     offsetApplied: state.offsetApplied ? "ON" : "OFF",
     channelOffsetsRaw: state.channelOffsetsRaw.map((value, index) => `ch${index + 1}:${Number(value).toFixed(3)}`).join(" "),
     channelGains,
@@ -4033,12 +4192,12 @@ function adsSettingsSnapshot() {
 }
 
 function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows, rate = actualSavedRate(headers, rows), options = {}) {
+  const settings = options.adsSettings || adsSettingsSnapshot();
   const regs = adsRegisters
-    .map(reg => `${reg.name}=${Number.isFinite(adsRegisterValues[reg.addr]) ? hexByte(adsRegisterValues[reg.addr]) : "--"}`)
+    .map(reg => `${reg.name}=${Number.isFinite(settings.registers[reg.addr]) ? hexByte(settings.registers[reg.addr]) : "--"}`)
     .join(" ");
   const actualHz = Number.isFinite(rate.hz) ? rate.hz.toFixed(4) : "";
   const duration = Number.isFinite(rate.durationSec) ? rate.durationSec.toFixed(4) : "";
-  const settings = options.adsSettings || adsSettingsSnapshot();
   const repeats = options.repeatStats || StreamRecording.exactRepeatStats(headers, rows);
   const configuredRate = settings.rate || "";
   const configuredRateNum = Number(configuredRate);
@@ -4047,6 +4206,30 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     ? (rateDiff <= Math.max(1, configuredRateNum * 0.01) ? "MATCH" : "MISMATCH")
     : "";
   return [
+    '# metadata_schema_version=2',
+    '# gui_version=2026-10-16-measurement-v7',
+    `# configuration_version=${settings.configRevision}`,
+    `# requested_sps=${settings.requestedSps}`,
+    `# configured_adc_sps=${settings.rate}`,
+    `# requested_global_gain=${settings.requestedGlobalGain}`,
+    `# adc_vref_volts=${settings.vrefVolts}`,
+    '# vref_voltage_source=user_declared_not_measured',
+    '# timestamp_basis=device_read_elapsed_us',
+    '# adc_drdy_rate_hz=UNKNOWN',
+    '# packet_loss=UNKNOWN_NO_SEQUENCE_COUNTER',
+    '# rate_match_scope=saved_samples_per_device_read_time_not_adc_or_ble_loss',
+    '# rate_match_tolerance=max(1Hz,1percent); startup_and_read_jitter_not_excluded',
+    '# configuration_change_policy=stop_recording_before_change',
+    `# requested_registers_json=${JSON.stringify(settings.requestedRegisters)}`,
+    `# applied_ack_registers_json=${JSON.stringify(settings.appliedRegisters)}`,
+    `# readback_timestamps_json=${JSON.stringify(settings.registerTimes)}`,
+    ...Object.entries(settings.context.channels).flatMap(([ch, info]) => {
+      const n = Number(ch.slice(2)), reg = settings.registers[n + 4];
+      return [`# channel_${n}_gain=${Number.isFinite(info.gain) ? info.gain : 'UNKNOWN'}`,
+        `# channel_${n}_lsb_uv_per_count=${Number.isFinite(info.lsb) ? info.lsb : 'UNKNOWN'}`,
+        `# channel_${n}_chnset_readback=${Number.isFinite(reg) ? hexByte(reg) : 'UNKNOWN'}`,
+        `# channel_${n}_readback_timestamp=${settings.registerTimes[n + 4] || 'UNKNOWN'}`];
+    }),
     `# source=${state.sourceName || "BLE ADS1299"}`,
     `# saved_at=${new Date().toISOString()}`,
     `# ads_config_rate_sps=${configuredRate}`,
@@ -4099,8 +4282,14 @@ function downloadStreamCsvWithMeta() {
 }
 
 function startRecordingWindow() {
+  if (state.commandJobs || state.commandFault) { status('설정 확인이 끝난 후 저장을 시작하세요. 명령 오류가 있으면 BLE를 다시 연결하세요.'); return; }
   if (!state.streamHeaders) {
     status("아직 stream header가 없습니다. 먼저 Start로 데이터가 들어오는지 확인하세요.");
+    return;
+  }
+  const ctx = liveMeasurementContext();
+  if (state.streamHeaders.filter(ch => /^ch[1-8]$/.test(ch)).some(ch => !Number.isFinite(ctx.channels[ch]?.lsb))) {
+    status('채널 Gain/VREF가 미확인입니다. Apply Config와 Read Regs로 확인한 뒤 Start → 저장 시작 순서로 진행하세요.');
     return;
   }
   StreamRecording.begin(state, {
@@ -4152,6 +4341,71 @@ function exportSummary() {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+function validationSlice(dataset, start, duration) {
+  const col = dataset.timeCol, scale = timeColumnScaleToSeconds(col);
+  if (!dataset.rows.length || col === '__sample_index__') throw new Error('검증에는 실제 device timestamp가 필요합니다.');
+  const origin = dataset.rows[0][col] * scale;
+  const rows = dataset.rows.filter(row => {
+    const t = row[col] * scale - origin;
+    return t >= start && t < start + duration;
+  });
+  return {rows, timeColumn: col, timeScale: scale, context: dataset.context, sourceName: dataset.sourceName};
+}
+
+async function runSignalValidation() {
+  const channel = $('validationChannel').value;
+  const options = {mode: $('validationMode').value, frequency: Number($('validationFrequency').value),
+    amplitudeMvPp: Number($('validationAmplitude').value), measuredAmplitudeMvPp: Number($('validationMeasuredAmplitude').value) || null,
+    start: Number($('validationStart').value), duration: Number($('validationDuration').value),
+    amplitudeTolerance: Number($('validationAmpTolerance').value), frequencyTolerance: Number($('validationFreqTolerance').value)};
+  if (!(options.duration > 0 && options.duration <= 120 && options.start >= 0 && options.frequency > 0 && options.amplitudeMvPp > 0 && options.amplitudeTolerance >= 0 && options.frequencyTolerance >= 0)) throw new Error('구간, 주파수, 진폭, 허용오차를 확인하세요.');
+  const dataset = state.datasetContext ? datasetView() : {...datasetView(), rows: state.streamRows, headers: state.streamHeaders || [], timeCol: 't_us', context: liveMeasurementContext()};
+  const capture = validationSlice(dataset, options.start, options.duration);
+  if (!capture.rows.length || !capture.rows.every(row => Number.isFinite(row[channel]))) throw new Error('선택 구간/채널에 유효 샘플이 없습니다.');
+  if (!Number.isFinite(capture.context.channels[channel]?.lsb)) throw new Error('Gain/VREF 미확인: Apply Config + Read Regs 후 다시 녹화하세요.');
+  const comparison = state.compareDataset?.channels.includes(channel) ? validationSlice(state.compareDataset, options.start, options.duration) : null;
+  state.validationWorker?.terminate();
+  $('validationExport').disabled = true;
+  setText('validationResult', '원본 구간 분석 중… (필터/offset 미적용)');
+  const worker = new Worker('./signal-validation-worker.js');
+  state.validationWorker = worker;
+  const result = await new Promise((resolve, reject) => {
+    worker.onmessage = event => event.data.error ? reject(new Error(event.data.error)) : resolve(event.data);
+    worker.onerror = event => reject(new Error(event.message));
+    worker.postMessage({...capture, channel, options, comparison});
+  }).finally(() => worker.terminate());
+  state.validationResult = result;
+  const fmt = (n, digits = 3) => Number.isFinite(n) ? n.toFixed(digits) : '미확인';
+  const {raw, inputUv: uv, timing: t, sine, psd, context} = result;
+  const lines = [
+    `${result.sourceName} / ${channel} / ${result.verdict}`,
+    `Gain ${context.channels[channel].gain}, VREF ${context.vref} V (선언값), LSB ${fmt(context.channels[channel].lsb, 9)} µV/count`,
+    `원본 ${raw.count} samples, ${fmt(t.duration)} s, nominal ${context.requestedSps} SPS, 저장률 ${fmt(t.savedRate)} samples/s`,
+    `시각 역전/중복 ${t.nonmonotonic}, 긴 간격(>1.8/nominal SPS) ${t.longIntervals}, 최대 간격 ${fmt(t.maxInterval * 1000)} ms`,
+    '실측 DRDY rate: 미계측 / BLE 손실률: 미확인(sequence 없음)',
+    `DC ${fmt(uv.mean)} µV, RMS(DC 포함) ${fmt(uv.rms)} µV, AC RMS ${fmt(uv.acRms)} µV`,
+    `원본 min/max ${raw.min}/${raw.max}, 관측 P2P ${raw.p2p} counts / ${fmt(uv.p2p)} µVpp`,
+    `ADC clipping ${raw.clipped} (${fmt(raw.clippedPercent)}%), 고정값 ${raw.stuck ? '예 — MUX/차동 상쇄/연결 확인' : '아니오'}`,
+    sine ? `사인파 피팅 ${fmt(sine.frequency, 6)} Hz (${fmt(sine.frequencyErrorPercent, 4)}%), ${fmt(sine.p2p)} µVpp, R² ${fmt(sine.r2, 6)}, fitted DC ${fmt(sine.dc)} µV` : '사인파 피팅: 해당 없음/불가',
+    sine ? `발생기 설정 대비 진폭 오차 ${fmt(result.amplitudeErrorVsGeneratorPercent)}%; 독립 실측 입력 대비 ${fmt(result.amplitudeErrorVsMeasuredPercent)}%` : '',
+    `PSD peak ${fmt(psd.peak?.f)} Hz, 50Hz 주변 ${fmt(psd.peak50?.y, 6)}, 60Hz 주변 ${fmt(psd.peak60?.y, 6)} µV²/Hz`,
+    `PSD 적분 AC RMS ${fmt(psd.integratedAcRms)} µV (${psd.band.join('–')} Hz, ${psd.window}, 50% overlap)`,
+    result.comparison ? `비교 B/A raw 피팅 진폭비 ${fmt(result.comparison.measuredRawAmplitudeRatioBoverA, 5)} / Gain 예상비 ${fmt(result.comparison.expectedRawGainRatioBoverA, 5)} (동일 입력 설정인지 확인)` : '',
+    ...result.warnings
+  ];
+  setText('validationResult', lines.filter(Boolean).join('\n'));
+  $('validationExport').disabled = false;
+}
+
+$('validationRun').addEventListener('click', () => runSignalValidation().catch(error => setText('validationResult', String(error.message || error))));
+$('validationExport').addEventListener('click', () => {
+  if (!state.validationResult) return;
+  const blob = new Blob([JSON.stringify(state.validationResult, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob), link = document.createElement('a');
+  link.href = url; link.download = 'ads1299-signal-validation.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+$('signalUnit').addEventListener('change', draw);
 
 $("fileInput").addEventListener("change", e => {
   const file = e.target.files[0];
@@ -4244,24 +4498,17 @@ $("adsStopBtn").addEventListener("click", () => sendAds1299Command("ADS1299 STOP
   .catch(err => status(String(err.stack || err))));
 $("adsRegBtn").addEventListener("click", () => sendAds1299Commands(adsReadConfigAndChannelCommands()).catch(err => status(String(err.stack || err))));
 $("adsApplyConfigBtn").addEventListener("click", () => {
-  rememberDesiredAdsChannels();
-  sendAds1299Commands(adsGlobalConfigCommands()).catch(err => status(String(err.stack || err)));
+  applyAdsMode('전체/채널 설정', null).catch(err => status(String(err.stack || err)));
 });
 $("adsApplyChannelsBtn").addEventListener("click", () => {
-  rememberDesiredAdsChannels();
-  sendAds1299Command(adsChannelsCommand())
-    .then(syncPlotSelectionToAdsChannels)
-    .catch(err => status(String(err.stack || err)));
+  applyAdsMode('채널 설정', null).catch(err => status(String(err.stack || err)));
 });
 $("adsCopyGlobalBtn").addEventListener("click", () => {
   copyGlobalAdsSettingsToChannels();
   status("전역 ADS1299 설정을 채널별 표에 복사했습니다.");
 });
 $("adsApplyChannelTableBtn").addEventListener("click", () => {
-  rememberDesiredAdsChannels();
-  sendAds1299Commands(adsChannelTableCommands())
-    .then(syncPlotSelectionToAdsChannels)
-    .catch(err => status(String(err.stack || err)));
+  applyAdsMode('채널 설정', null).catch(err => status(String(err.stack || err)));
 });
 $("adsReadRegBtn").addEventListener("click", () => sendAds1299Command(`ADS1299 RREG ${$("adsRegAddr").value.trim()}`).catch(err => status(String(err.stack || err))));
 $("adsWriteRegBtn").addEventListener("click", () => {
@@ -4295,9 +4542,10 @@ document.querySelectorAll(".tab").forEach(btn => {
     updateAdsChannelPreview();
   });
 });
-$("adsGain")?.addEventListener("change", () => {
+$("adsCopyGainBtn")?.addEventListener("click", () => {
   adsChannelRows().forEach(row => row.querySelector(".ads-ch-gain").value = $("adsGain").value);
   updateAdsChannelPreview();
+  status('Gain을 채널별 요청 표에 복사했습니다. 채널 설정 적용을 눌러 보드에 적용하세요.');
 });
 $("adsMux")?.addEventListener("change", () => {
   adsChannelRows().forEach(row => row.querySelector(".ads-ch-mux").value = $("adsMux").value);

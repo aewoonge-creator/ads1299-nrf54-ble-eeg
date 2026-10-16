@@ -1,6 +1,20 @@
 # ADS1299 nRF54 BLE EEG
 
-[웹 GUI 바로 열기 - P1.11 DRDY / 원신호 보존](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-drdy-p111-v6)
+[웹 GUI 바로 열기 - 채널별 Gain / 측정 검증 v7](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-measurement-v7)
+
+## GUI v7: 설정 확인과 신호 검증
+
+- SPS는 ADC 공통 속도입니다. 위쪽 Gain은 **일괄 복사 선택값**이며 현재 적용값이 아닙니다. `Gain만 전체 채널에 복사` → 채널별 요청 Gain 확인 → `채널 설정 적용` → 실제 Gain/readback 확인 → `Start` 순서로 사용합니다. 적용 버튼은 채널 표까지 전송하고 레지스터를 다시 읽습니다.
+- Requested / Applied(명령 ACK) / Readback을 분리했습니다. ACK만으로 실제 레지스터가 맞다고 판정하지 않습니다. 미확인은 미확인으로 표시합니다. BIAS sensing 선택은 전체 복사/drive OFF로 덮어쓰지 않습니다.
+- Raw/CSV는 수신 signed 24-bit counts를 그대로 보존합니다. 입력 환산은 채널별 `raw × VREF × 1e6 / (2^23 × Gain)`으로 통일했습니다. VREF 전압은 사용자가 선언한 값이며 실측 전압이 아닙니다.
+- CSV schema 2는 채널별 Gain/LSB/readback/시각과 설정 버전을 저장합니다. 기존 CSV의 공통 Gain이 채널 설정과 다르면 경고하고 채널 설정을 우선합니다. 구형 레지스터 메타데이터는 실제 readback 여부가 불확실하다고 표시합니다. 파일 설정은 분석에만 사용하며 연결된 보드의 요청 설정을 바꾸지 않습니다.
+- `Signal Validation`에서 파일 또는 최근 수신 버퍼의 사인파/내부 Input-short 구간을 분석합니다. 발생기 진폭 단위는 **mVpp**이며 WaveForms의 peak 진폭 5 mV는 10 mVpp입니다. 주파수/진폭/R²/DC/RMS/AC RMS/clipping/PSD/50·60 Hz 주변값과 JSON 보고서를 제공합니다. 파일 B가 있으면 B/A raw 피팅 진폭비와 Gain 예상비도 표시합니다.
+- Input-short 잡음은 offset 보정과 별개입니다. SHORTED MUX로 60초 이상 원본을 녹화한 뒤 분석 종류를 Input-short로 선택하세요. PSD는 Hann, 50% overlap, 구간별 DC 제거, one-sided µV²/Hz입니다. ADC full scale clipping과 고정값은 구분합니다.
+- 설정 변경은 녹화를 끝내고 새 CSV에서 시작합니다. 설정 적용/Start/Preset은 기존 녹화를 종료하고, 수동 레지스터 변경은 녹화 중 차단합니다. 원본에는 필터/offset 보정/보간을 적용하지 않습니다.
+- 저장률은 `(N−1)/(마지막 device read 시각−첫 시각)`이며 ADC DRDY 주파수 또는 BLE 손실률이 아닙니다. 현재 FW v6에는 DRDY 계수·sequence 계측이 없으므로 해당 지표는 미확인입니다. 불규칙 간격에서 FFT/PSD는 등간격 가정의 근사 결과이고, 사인파 피팅은 실제 `t_us`를 사용합니다.
+
+이번 버전은 GUI 변경입니다. FW는 `2026-10-16-drdy-p111-v6` 그대로이며 플래시하지 않습니다.
+재현 명령과 확인 범위는 [v7 검증 기록](validation-v7.md)을 참고하세요.
 
 ## 측정 원칙 및 확인된 배선 (2026-10-16)
 
