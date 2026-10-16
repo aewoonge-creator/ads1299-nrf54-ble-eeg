@@ -32,7 +32,7 @@ enum ads1299_test_frequency {
 };
 
 struct ads1299_sample {
-	uint32_t t_us;
+	uint64_t t_us;
 	int32_t channel[ADS1299_CHANNEL_COUNT];
 };
 

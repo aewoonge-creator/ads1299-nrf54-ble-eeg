@@ -17,8 +17,3 @@ properties:
     type: phandle-array
     required: true
     description: ADS1299 RESET output, active low
-
-  start-gpios:
-    type: phandle-array
-    required: true
-    description: ADS1299 START output, active high

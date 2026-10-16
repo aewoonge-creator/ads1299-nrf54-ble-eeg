@@ -24,7 +24,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
 #define COMMAND_MAX_LEN       256
-#define FW_VERSION            "2026-10-16-test-start-v5"
+#define FW_VERSION            "2026-10-16-drdy-p111-v6"
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -274,7 +274,7 @@ static void send_stream_sample(const struct ads1299_sample *sample)
 	size_t used;
 	uint8_t mask = stream_channel_mask();
 
-	used = snprintk(line, sizeof(line), "%u", sample->t_us);
+	used = snprintk(line, sizeof(line), "%llu", (unsigned long long)sample->t_us);
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		if ((mask & BIT(i)) == 0) {
 			continue;
@@ -867,7 +867,7 @@ int main(void)
 		static int64_t last_sample_ms;
 		static int64_t stream_started_us;
 		static bool stream_was_active;
-		int64_t now_us = uptime_us();
+		int64_t now_us;
 		int sample_err;
 
 		poll_rtt_commands();
@@ -876,6 +876,7 @@ int main(void)
 		 * notifications here may wait for buffers, unlike system-workqueue TX.
 		 */
 		process_next_command();
+		now_us = uptime_us();
 
 		if (!ads1299_is_streaming()) {
 			stream_was_active = false;
@@ -897,13 +898,13 @@ int main(void)
 				 */
 				int64_t elapsed_us = MAX((int64_t)0, uptime_us() - stream_started_us);
 
-				sample.t_us = (uint32_t)MIN(elapsed_us, (int64_t)UINT32_MAX);
+				sample.t_us = (uint64_t)elapsed_us;
 				send_stream_sample(&sample);
 			} else if (sample_err == -EAGAIN &&
 				   k_uptime_get() - last_sample_ms > 1000 &&
 				   k_uptime_get() - last_stream_status_ms > 2000) {
 				last_stream_status_ms = k_uptime_get();
-				ble_send_line("STREAM WAIT DRDY: no conversion-ready signal on P0.05\n");
+				ble_send_line("STREAM WAIT DRDY: no conversion-ready signal on P1.11\n");
 			} else if (sample_err != -EAGAIN &&
 				   k_uptime_get() - last_stream_status_ms > 1000) {
 				last_stream_status_ms = k_uptime_get();

@@ -1,6 +1,34 @@
 # ADS1299 nRF54 BLE EEG
 
-[웹 GUI 바로 열기 - Internal TEST / Offset 보정](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-test-start-v5)
+[웹 GUI 바로 열기 - P1.11 DRDY / 원신호 보존](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-drdy-p111-v6)
+
+## 측정 원칙 및 확인된 배선 (2026-10-16)
+
+목표는 ADS1299 실제 변환 수집 → BLE 전달 → GUI의 원시값 저장 및 파형 표시입니다.
+테스트를 통과시키기 위해 데이터 재생, 보간, 반복 샘플 삽입, 명목 SPS 타임스탬프 생성으로
+수집 실패를 숨기지 않습니다. CSV는 수신한 signed 24-bit ADC 정수값을 그대로 보존합니다.
+
+| nRF54L15 DK | ADS1299EEG-FE | 용도 |
+| --- | --- | --- |
+| P0.00 | J3-3 | SCLK |
+| P0.01 | J3-11 | MOSI |
+| P0.02 | J3-13 | MISO |
+| P0.03 | J3-7 | CS |
+| P0.04 | J3-8 | RESET |
+| **P1.11** | **J3-15** | **DRDY** |
+| GND | J4-5 | 공통 접지 |
+| VBUS | J4-10 | 5 V 전원 |
+| VDDIO | J4-9 | 디지털 전원, 실제 전압 확인 필요 |
+
+QFN48의 P0.05/P0.06은 외부 GPIO로 제공되지 않습니다. 번호 없는 P0 헤더에 연결하지 마세요.
+J3-12는 GPIO2이며 START가 아닙니다. 이 선은 제거했습니다. START/STOP은 SPI 명령으로
+제어하며, EVM의 실제 START 신호는 LOW로 유지되어야 합니다.
+
+v6 실기 검증: USB 디버거 RTT로 30초 동안 7,501행, 249.9877 SPS, 큰 간격/잘못된 행/
+8채널 전체 반복값 0건. 내부 TEST 8채널 3740.39–3742.84 µVpp, 0.976514 Hz.
+실제 수신 CSV를 웹 GUI 파서·TEST 판정·CSV 내보내기에 재생하여 8채널 PASS 및 숫자 원본
+동일성을 확인했습니다. 이는 **무선 BLE 또는 실제 브라우저 렌더링 검증을 대체하지 않습니다.**
+이 검증 PC에는 Bluetooth 어댑터가 없어 BLE 실측은 다른 노트북에서 수행해야 합니다.
 
 ADS1299 EEG front-end를 nRF54L15/nRF54L19 보드에 SPI로 연결하고, BLE Nordic UART
 형식으로 PC GUI에 EEG sample을 보내기 위한 프로젝트 시작점입니다.
@@ -65,7 +93,7 @@ GitHub Pages 방식이 가장 간단합니다.
 - sample rate, gain, MUX, reference 설정
 - BIAS / lead-off / 채널별 internal test signal 설정
 - internal square-wave 실측 진폭·주파수 자동 PASS/FAIL
-- Input-short 채널별 offset 측정 및 plot/CSV 보정
+- Input-short 채널별 offset 측정 및 실시간 Filtered 표시 보정 (웹 Raw/CSV는 항상 원본)
 - channel enable mask
 - single register read/write
 - custom command
@@ -96,8 +124,9 @@ Internal TEST는 `TEST_AMP=1X|2X`, `TEST_FREQ=SLOW|FAST|DC`, `TEST_MASK=0xNN`으
 설정합니다. SLOW/FAST는 각각 fCLK/2^21, fCLK/2^20이며, `TEST_MASK`의 채널만 CHnSET
 MUX=101로 연결됩니다. 웹/Python GUI의 자동 판정은 기본 2.048 MHz clock, 진폭 ±20%,
 주파수 ±10% 기준입니다. Input-short offset은 ADS1299 내부 보정 레지스터가 아니라 GUI가
-채널별 short 평균을 저장해 이후 plot/CSV 샘플에서 빼는 host-side 보정이며, GUI를 종료하면
-초기화됩니다.
+채널별 short 평균을 저장하는 host-side 보정이며, GUI를 종료하면 초기화됩니다.
+웹 v6에서는 offset을 실시간 Filtered 표시에만 적용하고 Raw/CSV는 수정하지 않습니다.
+필터·offset 설정을 바꿔도 녹화 중인 ADC 원본을 바꾸지 않습니다.
 
 nRF -> PC GUI:
 
@@ -125,14 +154,14 @@ t_us,ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8
 `2026-10-16-test-start-v5`에서는 설정 중 칩을 리셋하던 자동 SPI probe를 제거하고,
 명령과 샘플 읽기를 같은 스레드에서 처리합니다. `TEST 설정 중` 무한 대기 대신 START 응답,
 샘플 수신, DRDY 오류를 구분해 표시합니다. Internal TEST는 전극이 필요 없지만 DRDY 배선은
-필요합니다. TI ADS1299EEG-FE의 **J3-15(DRDYB) → nRF P0.05** 연결을 확인하세요
+필요합니다. TI ADS1299EEG-FE의 **J3-15(DRDYB) → nRF P1.11** 연결을 확인하세요
 ([TI SLAU443B, Table 8](https://www.ti.com/lit/ug/slau443b/slau443b.pdf)).
 
 `ADS1299 DATA DIAG`는 DRDY 200회 관찰 결과와 강제로 한 번 읽은 27바이트 프레임을 출력하는
 개발용 명령입니다. 이 프레임은 새 변환 여부가 보장되지 않으므로 정상 EEG stream/CSV에 넣지 않습니다.
 2026-10-16 연결 장치(1057721963) 검사에서 SLOW/1X 내부 신호는 8채널 모두 약
-3740–3743 µVpp, 약 0.970 Hz였지만 DRDY(P0.05)는 17000회 모두 HIGH였습니다.
-이는 저속 진단 읽기 결과이며, 정상 250 SPS 수집 성공을 의미하지 않습니다.
+3740–3743 µVpp, 약 0.970 Hz였지만 당시 잘못 지정된 DRDY(P0.05)는 17000회 모두 HIGH였습니다.
+이는 v5 저속 진단 읽기 결과입니다. 위 v6 배선 수정 후에는 DRDY 동기식 수집이 확인되었습니다.
 
 펌웨어 `2026-10-14-drdy-stream-v2`부터는 설정 SPS를 기준으로 `RDATA`를 반복 호출하지 않고,
 DRDY가 새 변환을 알릴 때만 한 프레임을 읽습니다. `t_us`도 실제 장치 읽기 시각을 사용하므로
@@ -152,7 +181,7 @@ DRDY가 새 변환을 알릴 때만 한 프레임을 읽습니다. `t_us`도 실
 `저장 시작 → 30초 이상 측정 → 저장 멈춤`을 4회 연속 반복하세요. 각 파일의 첫 `t_us`는
 해당 저장 창에 들어온 값부터 시작해야 하고, `saved_samples`와 중복 진단값은 파일마다 독립적이어야
 합니다. 정상 EEG에서 모든 저장 채널의 24-bit 값이 직전 프레임과 완전히 같은 비율은 보통 0%에
-가까워야 합니다. 새 펌웨어에서도 반복값이 남으면 DRDY(P0.05) 배선과 논리 레벨을 로직
+가까워야 합니다. 새 펌웨어에서도 반복값이 남으면 DRDY(P1.11) 배선과 논리 레벨을 로직
 애널라이저로 먼저 확인하세요.
 
 ## Safety

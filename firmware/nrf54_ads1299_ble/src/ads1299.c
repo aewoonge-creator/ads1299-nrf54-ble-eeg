@@ -60,8 +60,9 @@ static const struct gpio_dt_spec cs_gpio =
 	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, cs_gpios);
 static const struct gpio_dt_spec reset_gpio =
 	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, reset_gpios);
-static const struct gpio_dt_spec start_gpio =
-	GPIO_DT_SPEC_GET(ADS1299_CONTROL_NODE, start_gpios);
+BUILD_ASSERT(DT_GPIO_PIN(ADS1299_CONTROL_NODE, drdy_gpios) <
+	     DT_PROP(DT_GPIO_CTLR(ADS1299_CONTROL_NODE, drdy_gpios), ngpios),
+	     "DRDY must use a GPIO exposed by the selected SoC");
 
 static bool streaming;
 static bool spi_pins_configured;
@@ -128,16 +129,11 @@ static int ads1299_configure_data_pins(void)
 	if (err) {
 		return err;
 	}
-	if (!gpio_is_ready_dt(&drdy_gpio) ||
-	    !gpio_is_ready_dt(&start_gpio)) {
+	if (!gpio_is_ready_dt(&drdy_gpio)) {
 		return -ENODEV;
 	}
 
 	err = gpio_pin_configure_dt(&drdy_gpio, GPIO_INPUT);
-	if (err) {
-		return err;
-	}
-	err = gpio_pin_configure_dt(&start_gpio, GPIO_OUTPUT_INACTIVE);
 	if (err) {
 		return err;
 	}
@@ -348,7 +344,7 @@ int ads1299_start_stream(void)
 		return err;
 	}
 
-	gpio_pin_set_dt(&start_gpio, 1);
+	/* EVM START must remain LOW for command-controlled conversions. */
 	err = ads1299_cmd(ADS1299_CMD_START);
 	if (err) {
 		return err;
@@ -364,9 +360,6 @@ int ads1299_stop_stream(void)
 
 	streaming = false;
 	err = ads1299_cmd(ADS1299_CMD_STOP);
-	if (data_pins_configured) {
-		gpio_pin_set_dt(&start_gpio, 0);
-	}
 	return err;
 }
 
@@ -1007,8 +1000,8 @@ int ads1299_data_diagnostic(char *response, size_t response_len)
 	err = read_data_frame(frame);
 	if (err) return err;
 	size_t used = snprintk(response, response_len,
-		"DATA_DIAG DRDY_LOW=%u HIGH=%u START_RAW=%d FRAME=",
-		low, high, gpio_pin_get_raw(start_gpio.port, start_gpio.pin));
+		"DATA_DIAG DRDY_LOW=%u HIGH=%u START=SPI FRAME=",
+		low, high);
 	for (int i = 1; i <= ADS1299_FRAME_BYTES && used + 3 < response_len; ++i) {
 		used += snprintk(response + used, response_len - used, "%02X", frame[i]);
 	}
@@ -1030,7 +1023,7 @@ int ads1299_read_sample(struct ads1299_sample *sample)
 	if (err) return err;
 	if ((frame[1] & 0xF0) != 0xC0) return -EBADMSG;
 
-	sample->t_us = k_uptime_get_32() * 1000U;
+	sample->t_us = k_ticks_to_us_floor64(k_uptime_ticks());
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {
 		int base = 1 + 3 + i * 3;
 		uint32_t raw = ((uint32_t)frame[base] << 16) |

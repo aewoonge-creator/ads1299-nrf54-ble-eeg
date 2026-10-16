@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-10-16-test-start-v5">
+  <meta name="app-version" content="2026-10-16-drdy-p111-v6">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1130,7 +1130,7 @@
         <input id="adsOffsetSeconds" type="number" min="1" max="30" step="1" value="3">
       </div>
       <div class="checks">
-        <label class="check"><input id="adsApplyOffset" type="checkbox">저장된 offset을 plot/CSV에 적용</label>
+        <label class="check"><input id="adsApplyOffset" type="checkbox">Offset을 실시간 Filtered 표시에 적용 (Raw/CSV 원본 유지)</label>
       </div>
     </div>
     <div class="row">
@@ -1830,7 +1830,7 @@ function checkInternalTestTimeout(now = performance.now()) {
       failInternalTest("START 응답이 없습니다. 연결 및 보드 응답 로그를 확인하세요.");
     }
   } else if (now - diagnostic.lastSampleAt > 5000) {
-    failInternalTest("샘플을 받지 못했습니다. DRDY(P0.05) 연결과 보드 응답 로그를 확인하세요.");
+    failInternalTest("샘플을 받지 못했습니다. DRDY(P1.11) 연결과 보드 응답 로그를 확인하세요.");
   } else if (now - diagnostic.startedAt > 20000) {
     failInternalTest("측정 시간이 진행되지 않습니다. 샘플 시간(t_us)과 누락 여부를 확인하세요.");
   }
@@ -1840,7 +1840,7 @@ function handleInternalTestDeviceLine(line) {
   const diagnostic = state.testDiagnostic;
   if (!diagnostic) return;
   if (/^STREAM WAIT DRDY\b/.test(line)) {
-    failInternalTest("DRDY 데이터 준비 신호가 없습니다. ADS1299 DRDY → nRF P0.05 배선과 보드 점퍼를 확인하세요. 전극 연결은 필요 없습니다.");
+    failInternalTest("DRDY 데이터 준비 신호가 없습니다. ADS1299 J3-15 → nRF P1.11 배선과 보드 점퍼를 확인하세요. 전극 연결은 필요 없습니다.");
   } else if (/^(ERR\b|STREAM ERR\b)/.test(line)) {
     failInternalTest(`보드 오류: ${line}`);
   } else if (line === "OK START" && diagnostic.phase === "configuring") {
@@ -2470,7 +2470,7 @@ function refreshLivePlot(source) {
   const psds = {};
   const ffts = {};
   selected.forEach(ch => {
-    filtered[ch] = state.view === "filtered" || fullAnalysis ? filterSignal(data[ch], fs) : data[ch];
+    filtered[ch] = state.view === "filtered" || fullAnalysis ? filterSignal(data[ch], fs, ch) : data[ch];
     if (fullAnalysis) {
       const maxFreq = Math.min(Number($("maxFreqInput").value) || 45, fs / 2);
       psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= maxFreq);
@@ -2711,8 +2711,13 @@ function filtfilt(xs, coeff) {
   return applyBiquad(fwd.slice().reverse(), coeff).reverse();
 }
 
-function filterSignal(xs, fs) {
-  let y = $("detrendOn").checked ? demean(xs) : xs.slice();
+function filterSignal(xs, fs, liveChannel = null) {
+  // Never mutate received ADC counts: offset and filters are display-only.
+  const channel = /^ch([1-8])$/i.exec(liveChannel || "");
+  const offset = channel && state.offsetApplied && !state.offsetCalibration
+    ? state.channelOffsetsRaw[Number(channel[1]) - 1] || 0 : 0;
+  const display = xs.map(value => value - offset);
+  let y = $("detrendOn").checked ? demean(display) : display;
   const hp = Number($("hpInput").value) || 0;
   const lp = Number($("lpInput").value) || 0;
   const notch = Number($("notchInput").value) || 0;
@@ -2828,7 +2833,7 @@ function analyze() {
   selected.forEach(ch => {
     const xs = valuesFor(rows, ch);
     data[ch] = xs;
-    filtered[ch] = filterSignal(xs, fs);
+    filtered[ch] = filterSignal(xs, fs, state.streamRows.includes(rows[0]) ? ch : null);
     const maxFreq = Math.min(Number($("maxFreqInput").value) || 45, fs / 2);
     psds[ch] = welch(filtered[ch], fs).filter(d => d.f <= maxFreq);
     ffts[ch] = spectrum(filtered[ch], fs).filter(d => d.f <= maxFreq);
@@ -3024,7 +3029,7 @@ function drawMiniChannelPlot(canvas, xs, idx) {
   for (let i = 0; i < xs.length; i += step) compact.push(xs[i]);
   const finite = compact.filter(Number.isFinite);
   const mean = finite.reduce((s, v) => s + v, 0) / Math.max(1, finite.length);
-  const centered = compact.map(v => Number.isFinite(v) ? v - mean : 0);
+  const centered = compact.map(v => Number.isFinite(v) ? v : 0); // raw mini-plots keep DC too
   const maxAbs = Math.max(...centered.map(v => Math.abs(v))) || 1;
   const colors = ["#2563eb", "#0f766e", "#b42318", "#7c3aed", "#ea580c", "#0891b2", "#4d7c0f", "#be185d"];
   ctx.strokeStyle = colors[idx % colors.length];
@@ -3092,8 +3097,8 @@ function drawSignals(ctx, w, h, a, series) {
     const base = pad.t + laneH * (idx + 0.5);
     const finite = xs.filter(Number.isFinite);
     const mean = finite.reduce((sum, v) => sum + v, 0) / Math.max(1, finite.length);
-    const centered = xs.map(v => Number.isFinite(v) ? v - mean : 0);
-    const maxAbs = fixedMode ? fixedScale : (Math.max(...centered.map(v => Math.abs(v))) || 1);
+    const centered = xs.map(v => Number.isFinite(v) ? v - (state.view === "raw" ? 0 : mean) : NaN);
+    const maxAbs = fixedMode ? fixedScale : (Math.max(...centered.filter(Number.isFinite).map(v => Math.abs(v))) || 1);
     ctx.strokeStyle = "#eef2f6";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -3103,11 +3108,18 @@ function drawSignals(ctx, w, h, a, series) {
     ctx.strokeStyle = colors[idx % colors.length];
     ctx.lineWidth = 1.2;
     ctx.beginPath();
+    const times = a.rows.map(row => Number(row[a.timeCol]));
+    const span = times.at(-1) - times[0];
+    const useTimes = span > 0 && times.every(Number.isFinite);
+    let penDown = false;
     centered.forEach((v, i) => {
-      const x = pad.l + i / Math.max(1, centered.length - 1) * pw;
+      if (!Number.isFinite(v)) { penDown = false; return; }
+      const x = pad.l + (useTimes ? (times[i] - times[0]) / span : i / Math.max(1, centered.length - 1)) * pw;
       const y = base - (v / maxAbs) * laneH * laneGain;
-      if (i === 0) ctx.moveTo(x, y);
+      const gap = useTimes && i > 0 && (times[i] - times[i - 1]) * timeColumnScaleToSeconds(a.timeCol) > 1.8 / a.fs;
+      if (!penDown || gap) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
+      penDown = true;
     });
     ctx.stroke();
     ctx.fillStyle = "#172033";
@@ -3814,13 +3826,18 @@ function appendStreamLine(line, source) {
     return;
   }
   if (allNumeric && state.streamHeaders && cells.length !== state.streamHeaders.length) {
-    state.streamHeaders = null;
-    state.streamRows = [];
-    state.streamSampleCount = 0;
-    state.streamStartedAt = 0;
-    state.streamStoppedAt = 0;
-    if (state.recording) stopRecordingWindow();
-    else resetRecording();
+    logOnly(`${source}\n잘못된 샘플 열 수: ${trimmed}`);
+    return; // A damaged packet must not reset the recording/header.
+  }
+  if (!allNumeric && !/^t_us(?:,ch[1-8])+$/.test(cells.join(","))) {
+    logOnly(`${source}\n무시한 비데이터 응답: ${trimmed}`);
+    return;
+  }
+  if (allNumeric && (cells.length < 2 || cells.length > 9 ||
+      !Number.isSafeInteger(Number(cells[0])) || Number(cells[0]) < 0 ||
+      cells.slice(1).some(c => !Number.isInteger(Number(c)) || Number(c) < -8388608 || Number(c) > 8388607))) {
+    logOnly(`${source}\n잘못된 ADC 샘플: ${trimmed}`);
+    return;
   }
   if (!state.streamHeaders && allNumeric) {
     state.streamHeaders = ["t_us", ...Array.from({ length: cells.length - 1 }, (_, i) => `ch${i + 1}`)];
@@ -3857,12 +3874,7 @@ function appendStreamLine(line, source) {
       finishInputShortOffsetCalibration().catch(error => status(String(error?.stack || error)));
     }
   }
-  if (state.offsetApplied && !state.offsetCalibration) {
-    for (let index = 0; index < 8; index++) {
-      const key = `ch${index + 1}`;
-      if (Number.isFinite(obj[key])) obj[key] -= state.channelOffsetsRaw[index] || 0;
-    }
-  }
+  // Raw view, recording and export always keep the received signed 24-bit counts.
   state.streamRows.push(obj);
   state.streamSampleCount++;
   if (state.recording) {
@@ -4040,7 +4052,9 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     `# ads_config_rate_sps=${configuredRate}`,
     `# actual_saved_rate_hz=${actualHz}`,
     `# actual_rate_time_column=${rate.timeCol || ""}`,
-    `# csv_timebase=ads_sample_clock`,
+    `# csv_timebase=device_read_elapsed_us`,
+    `# csv_data=raw_signed_24bit_adc_counts`,
+    `# csv_filters=NONE`,
     `# rate_match_status=${rateMatch}`,
     `# saved_samples=${rows?.length || 0}`,
     `# saved_duration_s=${duration}`,
@@ -4065,7 +4079,8 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     `# ads_test_amplitude=${settings.testAmplitude}`,
     `# ads_test_frequency=${settings.testFrequency}`,
     `# ads_test_mask=${settings.testMask}`,
-    `# ads_offset_correction=${settings.offsetApplied}`,
+    `# ads_offset_correction=OFF`,
+    `# display_offset_correction=${settings.offsetApplied}`,
     `# ads_channel_offsets_raw=${settings.channelOffsetsRaw}`,
     `# channel_registers ${settings.channelRegisters}`,
     `# registers ${regs}`
@@ -4199,7 +4214,8 @@ $("adsRunTestBtn").addEventListener("click", () => startInternalTestDiagnostic()
 $("adsOffsetCalBtn").addEventListener("click", () => startInputShortOffsetCalibration().catch(err => status(String(err.stack || err))));
 $("adsApplyOffset").addEventListener("change", () => {
   state.offsetApplied = $("adsApplyOffset").checked;
-  status(`Input-short offset 적용 ${state.offsetApplied ? "ON" : "OFF"}. 변경 이후 수신 샘플부터 plot/CSV에 반영됩니다.`);
+  status(`Input-short offset 표시 ${state.offsetApplied ? "ON" : "OFF"}. 실시간 Filtered에만 적용되며 Raw/CSV 원시값은 바뀌지 않습니다.`);
+  if (state.streamRows.length) refreshLivePlot(state.sourceName || "BLE");
 });
 $("adsOffsetClearBtn").addEventListener("click", () => {
   state.channelOffsetsRaw = Array(8).fill(0);

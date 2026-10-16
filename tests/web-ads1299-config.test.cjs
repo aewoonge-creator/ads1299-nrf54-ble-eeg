@@ -35,5 +35,6 @@ test("web GUI exposes internal TEST routing, automatic verdict, and offset corre
   assert.match(inlineScript, /TEST_MASK=/);
   assert.match(inlineScript, /analyzeInternalTestChannel/);
   assert.match(inlineScript, /finishInputShortOffsetCalibration/);
-  assert.match(inlineScript, /obj\[key\] -= state\.channelOffsetsRaw/);
+  assert.doesNotMatch(inlineScript, /obj\[key\] -= state\.channelOffsetsRaw/);
+  assert.match(inlineScript, /const display = xs\.map\(value => value - offset\)/);
 });

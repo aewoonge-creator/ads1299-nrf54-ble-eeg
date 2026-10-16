@@ -42,9 +42,9 @@ test('missing START acknowledgement cannot leave configuring indefinitely', () =
 
 test('DRDY error reports wiring instead of continuing setup', () => {
   const { context, state, messages } = harness();
-  context.handleInternalTestDeviceLine('STREAM WAIT DRDY: no conversion-ready signal on P0.05');
+  context.handleInternalTestDeviceLine('STREAM WAIT DRDY: no conversion-ready signal on P1.11');
   assert.equal(state.testDiagnostic, null);
-  assert.match(messages.adsTestResult, /DRDY.*P0\.05/);
+  assert.match(messages.adsTestResult, /DRDY.*P1\.11/);
 });
 
 test('device errors and disconnection terminate the diagnostic', () => {
