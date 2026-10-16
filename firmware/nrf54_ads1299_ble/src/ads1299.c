@@ -963,53 +963,72 @@ int ads1299_apply_config(const struct ads1299_config *config)
 	return 0;
 }
 
-int ads1299_read_sample(struct ads1299_sample *sample)
+static int read_data_frame(uint8_t *frame)
 {
 	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
-	uint8_t frame[ADS1299_FRAME_BYTES + 1];
-	int data_ready;
-	int err;
-
-	if (!sample) {
-		return -EINVAL;
-	}
-	if (!streaming) {
-		return -EAGAIN;
-	}
-	if (!data_pins_configured) {
-		return -EAGAIN;
-	}
-
-	/*
-	 * DRDY is active-low in hardware and declared GPIO_ACTIVE_LOW, so the
-	 * logical value is 1 only when a new conversion is ready.  Reading RDATA
-	 * from a timer without this gate can return the previous conversion again
-	 * whenever the host loop wakes early or tries to catch up after a delay.
-	 */
-	data_ready = gpio_pin_get_dt(&drdy_gpio);
-	if (data_ready < 0) {
-		return data_ready;
-	}
-	if (data_ready == 0) {
-		return -EAGAIN;
-	}
-	err = bitbang_gpio_configure(gpio);
+	int err = bitbang_gpio_configure(gpio);
 	if (err) {
 		return err;
 	}
 
-	memset(frame, 0, sizeof(frame));
+	memset(frame, 0, ADS1299_FRAME_BYTES + 1);
 
 	k_mutex_lock(&spi_lock, K_FOREVER);
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 0);
 	bitbang_delay();
 	frame[0] = bitbang_transfer_byte(gpio, ADS1299_CMD_RDATA, ADS1299_BITBANG_MODE);
-	for (int i = 1; i < ARRAY_SIZE(frame); i++) {
+	k_busy_wait(4); /* RDATA command decode: at least 4 tCLK at 2.048 MHz. */
+	for (int i = 1; i < ADS1299_FRAME_BYTES + 1; i++) {
 		frame[i] = bitbang_transfer_byte(gpio, 0x00, ADS1299_BITBANG_MODE);
 	}
 	bitbang_delay();
 	gpio_pin_set(gpio, ADS1299_BB_CS_PIN, 1);
 	k_mutex_unlock(&spi_lock);
+	return 0;
+}
+
+int ads1299_data_diagnostic(char *response, size_t response_len)
+{
+	uint8_t frame[ADS1299_FRAME_BYTES + 1];
+	unsigned int low = 0, high = 0;
+	int err;
+	if (!response || !response_len || !data_pins_configured) {
+		return -EINVAL;
+	}
+	/* Diagnostic only: observe DRDY, then capture one unqualified frame.
+	 * Never publish this forced read as a valid stream sample.
+	 */
+	for (int i = 0; i < 200; ++i) {
+		int raw = gpio_pin_get_raw(drdy_gpio.port, drdy_gpio.pin);
+		if (raw < 0) return raw;
+		if (raw) high++; else low++;
+		k_busy_wait(100);
+	}
+	err = read_data_frame(frame);
+	if (err) return err;
+	size_t used = snprintk(response, response_len,
+		"DATA_DIAG DRDY_LOW=%u HIGH=%u START_RAW=%d FRAME=",
+		low, high, gpio_pin_get_raw(start_gpio.port, start_gpio.pin));
+	for (int i = 1; i <= ADS1299_FRAME_BYTES && used + 3 < response_len; ++i) {
+		used += snprintk(response + used, response_len - used, "%02X", frame[i]);
+	}
+	if (used < response_len) snprintk(response + used, response_len - used, "\n");
+	return 0;
+}
+
+int ads1299_read_sample(struct ads1299_sample *sample)
+{
+	uint8_t frame[ADS1299_FRAME_BYTES + 1];
+	int err;
+	if (!sample) return -EINVAL;
+	if (!streaming || !data_pins_configured) return -EAGAIN;
+	/* GPIO_ACTIVE_LOW makes logical 1 mean conversion ready. */
+	int ready = gpio_pin_get_dt(&drdy_gpio);
+	if (ready < 0) return ready;
+	if (!ready) return -EAGAIN;
+	err = read_data_frame(frame);
+	if (err) return err;
+	if ((frame[1] & 0xF0) != 0xC0) return -EBADMSG;
 
 	sample->t_us = k_uptime_get_32() * 1000U;
 	for (int i = 0; i < ADS1299_CHANNEL_COUNT; i++) {

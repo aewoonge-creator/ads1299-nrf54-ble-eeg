@@ -1,6 +1,6 @@
 # ADS1299 nRF54 BLE EEG
 
-[웹 GUI 바로 열기 - Internal TEST / Offset 보정](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-test-cal-v4)
+[웹 GUI 바로 열기 - Internal TEST / Offset 보정](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-test-start-v5)
 
 ADS1299 EEG front-end를 nRF54L15/nRF54L19 보드에 SPI로 연결하고, BLE Nordic UART
 형식으로 PC GUI에 EEG sample을 보내기 위한 프로젝트 시작점입니다.
@@ -121,6 +121,18 @@ t_us,ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8
 8. CSV 저장 및 plot 확인
 
 ## 반복 저장 및 데이터 무결성 확인
+
+`2026-10-16-test-start-v5`에서는 설정 중 칩을 리셋하던 자동 SPI probe를 제거하고,
+명령과 샘플 읽기를 같은 스레드에서 처리합니다. `TEST 설정 중` 무한 대기 대신 START 응답,
+샘플 수신, DRDY 오류를 구분해 표시합니다. Internal TEST는 전극이 필요 없지만 DRDY 배선은
+필요합니다. TI ADS1299EEG-FE의 **J3-15(DRDYB) → nRF P0.05** 연결을 확인하세요
+([TI SLAU443B, Table 8](https://www.ti.com/lit/ug/slau443b/slau443b.pdf)).
+
+`ADS1299 DATA DIAG`는 DRDY 200회 관찰 결과와 강제로 한 번 읽은 27바이트 프레임을 출력하는
+개발용 명령입니다. 이 프레임은 새 변환 여부가 보장되지 않으므로 정상 EEG stream/CSV에 넣지 않습니다.
+2026-10-16 연결 장치(1057721963) 검사에서 SLOW/1X 내부 신호는 8채널 모두 약
+3740–3743 µVpp, 약 0.970 Hz였지만 DRDY(P0.05)는 17000회 모두 HIGH였습니다.
+이는 저속 진단 읽기 결과이며, 정상 250 SPS 수집 성공을 의미하지 않습니다.
 
 펌웨어 `2026-10-14-drdy-stream-v2`부터는 설정 SPS를 기준으로 `RDATA`를 반복 호출하지 않고,
 DRDY가 새 변환을 알릴 때만 한 프레임을 읽습니다. `t_us`도 실제 장치 읽기 시각을 사용하므로

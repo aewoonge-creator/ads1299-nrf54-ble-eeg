@@ -24,7 +24,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
 #define COMMAND_MAX_LEN       256
-#define FW_VERSION            "2026-10-15-test-cal-v4"
+#define FW_VERSION            "2026-10-16-test-start-v5"
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -58,8 +58,7 @@ static bool ads_internal_bias_reference = true;
 static uint8_t ads_bias_sensp_mask = 0xFF;
 static uint8_t ads_bias_sensn_mask = 0xFF;
 
-static void command_work_handler(struct k_work *work);
-K_WORK_DEFINE(command_work, command_work_handler);
+static void process_next_command(void);
 K_MUTEX_DEFINE(command_lock);
 
 static void ble_send_line(const char *line);
@@ -422,7 +421,7 @@ static void ble_send_line(const char *line)
 	SEGGER_RTT_WriteString(0, line);
 #endif
 
-	if (!current_conn) {
+	if (!current_conn || !tx_notify_enabled) {
 		return;
 	}
 
@@ -442,11 +441,7 @@ static void ble_send_line(const char *line)
 
 static void submit_command(const char *command)
 {
-	char ack[COMMAND_MAX_LEN + 16];
 	bool queued = false;
-
-	snprintk(ack, sizeof(ack), "ACK %s\n", command);
-	ble_send_line(ack);
 
 	k_mutex_lock(&command_lock, K_FOREVER);
 	if (command_queue_count < COMMAND_QUEUE_DEPTH) {
@@ -458,10 +453,8 @@ static void submit_command(const char *command)
 		queued = true;
 	}
 	k_mutex_unlock(&command_lock);
-	if (queued) {
-		k_work_submit(&command_work);
-	} else {
-		ble_send_line("ERR COMMAND_QUEUE_FULL\n");
+	if (!queued) {
+		LOG_ERR("Command queue full");
 	}
 }
 
@@ -605,6 +598,15 @@ static void handle_ads1299_command(const char *command)
 			snprintk(response, sizeof(response), "ERR GPIO %d\n", err);
 			ble_send_line(response);
 		}
+		return;
+	}
+	if (strcmp(command, "ADS1299 DATA DIAG") == 0) {
+		char response[256];
+		int err = ads1299_data_diagnostic(response, sizeof(response));
+		if (err) {
+			snprintk(response, sizeof(response), "ERR DATA_DIAG %d\n", err);
+		}
+		ble_send_line(response);
 		return;
 	}
 	if (strcmp(command, "ADS1299 MISO GPIO") == 0) {
@@ -797,26 +799,20 @@ static void handle_ads1299_command(const char *command)
 	ble_send_line("ERR UNKNOWN_COMMAND\n");
 }
 
-static void command_work_handler(struct k_work *work)
+static void process_next_command(void)
 {
 	char command[COMMAND_MAX_LEN];
-
-	ARG_UNUSED(work);
-
-	while (true) {
-		k_mutex_lock(&command_lock, K_FOREVER);
-		if (command_queue_count == 0) {
-			k_mutex_unlock(&command_lock);
-			break;
-		}
-		strncpy(command, command_queue[command_queue_head], sizeof(command) - 1);
-		command[sizeof(command) - 1] = '\0';
-		command_queue_head = (command_queue_head + 1) % COMMAND_QUEUE_DEPTH;
-		command_queue_count--;
+	k_mutex_lock(&command_lock, K_FOREVER);
+	if (command_queue_count == 0) {
 		k_mutex_unlock(&command_lock);
-
-		handle_ads1299_command(command);
+		return;
 	}
+	strncpy(command, command_queue[command_queue_head], sizeof(command) - 1);
+	command[sizeof(command) - 1] = '\0';
+	command_queue_head = (command_queue_head + 1) % COMMAND_QUEUE_DEPTH;
+	command_queue_count--;
+	k_mutex_unlock(&command_lock);
+	handle_ads1299_command(command);
 }
 
 static void poll_rtt_commands(void)
@@ -867,52 +863,19 @@ int main(void)
 	while (1) {
 		struct ads1299_sample sample;
 		char line[160];
-		static int64_t last_auto_probe_ms;
 		static int64_t last_stream_status_ms;
+		static int64_t last_sample_ms;
 		static int64_t stream_started_us;
 		static bool stream_was_active;
 		int64_t now_us = uptime_us();
 		int sample_err;
 
 		poll_rtt_commands();
-
-		if (!ads1299_is_streaming() &&
-		    k_uptime_get() - last_auto_probe_ms > 3000) {
-			char probe[128];
-			char gpio[128];
-			char miso[128];
-			char miso_cs_low[128];
-			char bitbang[128];
-			char reset_probe[128];
-
-			last_auto_probe_ms = k_uptime_get();
-			if (ads1299_gpio_status(gpio, sizeof(gpio)) == 0) {
-				snprintk(line, sizeof(line), "AUTO %s\n", gpio);
-				ble_send_line(line);
-			}
-			if (ads1299_miso_gpio_probe(miso, sizeof(miso)) == 0) {
-				snprintk(line, sizeof(line), "AUTO %s\n", miso);
-				ble_send_line(line);
-			}
-			if (ads1299_miso_cs_low_probe(miso_cs_low, sizeof(miso_cs_low)) == 0) {
-				snprintk(line, sizeof(line), "AUTO %s\n", miso_cs_low);
-				ble_send_line(line);
-			}
-			if (ads1299_probe_id_modes(probe, sizeof(probe)) == 0) {
-				snprintk(line, sizeof(line), "AUTO SPI PROBE %s\n", probe);
-				ble_send_line(line);
-			} else {
-				ble_send_line("AUTO SPI PROBE ERR\n");
-			}
-			if (ads1299_bitbang_probe_id_modes(bitbang, sizeof(bitbang)) == 0) {
-				snprintk(line, sizeof(line), "AUTO BITBANG PROBE %s\n", bitbang);
-				ble_send_line(line);
-			}
-			if (ads1299_probe_after_reset(reset_probe, sizeof(reset_probe)) == 0) {
-				snprintk(line, sizeof(line), "AUTO %s\n", reset_probe);
-				ble_send_line(line);
-			}
-		}
+		/* Keep commands and acquisition on one thread. Background reset/probe
+		 * routines must never run while the GUI is configuring the ADC. GATT
+		 * notifications here may wait for buffers, unlike system-workqueue TX.
+		 */
+		process_next_command();
 
 		if (!ads1299_is_streaming()) {
 			stream_was_active = false;
@@ -921,11 +884,13 @@ int main(void)
 		if (ads1299_is_streaming() && !stream_was_active) {
 			stream_was_active = true;
 			stream_started_us = now_us;
+			last_sample_ms = k_uptime_get();
 		}
 
 		if (ads1299_is_streaming()) {
 			sample_err = ads1299_read_sample(&sample);
 			if (sample_err == 0) {
+				last_sample_ms = k_uptime_get();
 				/* Use the actual device read time so missed conversions remain
 				 * visible as timestamp gaps instead of being hidden by a nominal
 				 * sample index clock.  The protocol field remains t_us.
@@ -934,6 +899,11 @@ int main(void)
 
 				sample.t_us = (uint32_t)MIN(elapsed_us, (int64_t)UINT32_MAX);
 				send_stream_sample(&sample);
+			} else if (sample_err == -EAGAIN &&
+				   k_uptime_get() - last_sample_ms > 1000 &&
+				   k_uptime_get() - last_stream_status_ms > 2000) {
+				last_stream_status_ms = k_uptime_get();
+				ble_send_line("STREAM WAIT DRDY: no conversion-ready signal on P0.05\n");
 			} else if (sample_err != -EAGAIN &&
 				   k_uptime_get() - last_stream_status_ms > 1000) {
 				last_stream_status_ms = k_uptime_get();

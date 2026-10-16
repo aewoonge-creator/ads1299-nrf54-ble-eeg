@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-10-16-test-cal-v4">
+  <meta name="app-version" content="2026-10-16-test-start-v5">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -1122,7 +1122,8 @@
       </div>
       <div><button id="adsRunTestBtn" class="secondary">TEST 실행 + 자동 판정</button></div>
     </div>
-    <div id="adsTestResult" class="status compactStatus">TEST 대기: 채널 표에서 TEST MUX 채널을 선택하세요.</div>
+    <div class="note">Internal TEST는 칩 내부 신호로 ADC·데이터 전송을 검사합니다. 전극은 필요 없지만 ADS1299↔nRF 배선(전원, SPI, DRDY)은 필요합니다. 전극 접촉 검사나 offset 보정과는 별개입니다.</div>
+    <div id="adsTestResult" class="status compactStatus">TEST 대기: TEST 채널을 선택하세요. 선택하지 않으면 활성 채널 전체를 검사합니다.</div>
     <div class="row">
       <div>
         <label for="adsOffsetSeconds">Input-short 보정 시간 (s)</label>
@@ -1812,9 +1813,50 @@ function analyzeInternalTestChannel(rows, channel, options = {}) {
   return { channel, passed: amplitudeError <= 0.20 && frequencyError <= 0.10, measuredUv, expectedUv, measuredHz, expectedHz: expected.hz, amplitudeError, frequencyError };
 }
 
+function failInternalTest(message) {
+  if (!state.testDiagnostic) return;
+  state.testDiagnostic = null;
+  $("adsRunTestBtn").disabled = false;
+  setText("adsTestResult", `TEST 판정 중단: ${message}`);
+}
+
+function checkInternalTestTimeout(now = performance.now()) {
+  const diagnostic = state.testDiagnostic;
+  if (!diagnostic) return;
+  if (!state.bleRxCharacteristic) {
+    failInternalTest("BLE 연결이 끊겼습니다. 다시 연결한 뒤 실행하세요.");
+  } else if (diagnostic.phase === "configuring") {
+    if (now - diagnostic.createdAt > 20000) {
+      failInternalTest("START 응답이 없습니다. 연결 및 보드 응답 로그를 확인하세요.");
+    }
+  } else if (now - diagnostic.lastSampleAt > 5000) {
+    failInternalTest("샘플을 받지 못했습니다. DRDY(P0.05) 연결과 보드 응답 로그를 확인하세요.");
+  } else if (now - diagnostic.startedAt > 20000) {
+    failInternalTest("측정 시간이 진행되지 않습니다. 샘플 시간(t_us)과 누락 여부를 확인하세요.");
+  }
+}
+
+function handleInternalTestDeviceLine(line) {
+  const diagnostic = state.testDiagnostic;
+  if (!diagnostic) return;
+  if (/^STREAM WAIT DRDY\b/.test(line)) {
+    failInternalTest("DRDY 데이터 준비 신호가 없습니다. ADS1299 DRDY → nRF P0.05 배선과 보드 점퍼를 확인하세요. 전극 연결은 필요 없습니다.");
+  } else if (/^(ERR\b|STREAM ERR\b)/.test(line)) {
+    failInternalTest(`보드 오류: ${line}`);
+  } else if (line === "OK START" && diagnostic.phase === "configuring") {
+    diagnostic.phase = "collecting";
+    diagnostic.startedAt = performance.now();
+    diagnostic.lastSampleAt = diagnostic.startedAt;
+    state.testRows = [];
+    setText("adsTestResult", "TEST 시작 확인됨 · 첫 샘플을 기다리는 중...");
+  }
+}
+
+setInterval(checkInternalTestTimeout, 250);
+
 function renderInternalTestResults() {
   const diagnostic = state.testDiagnostic;
-  if (!diagnostic || !state.testRows.length) return;
+  if (!diagnostic || diagnostic.phase !== "collecting" || !state.testRows.length) return;
   const elapsed = (state.testRows.at(-1).t_us - state.testRows[0].t_us) / 1e6;
   const required = diagnostic.frequency === "SLOW" ? 4 : 2;
   if (elapsed < required) {
@@ -1829,6 +1871,7 @@ function renderInternalTestResults() {
   });
   setText("adsTestResult", lines.join(" | "));
   state.testDiagnostic = null;
+  $("adsRunTestBtn").disabled = false;
 }
 
 async function applyAdsMode(name, configure) {
@@ -3572,8 +3615,7 @@ async function sendAds1299Commands(commands) {
   const lines = commands.map(v => String(v).trim()).filter(Boolean);
   if (!lines.length) return;
   if (!state.bleRxCharacteristic) {
-    status("BLE write characteristic이 아직 연결되지 않았습니다. 먼저 BLE 버튼으로 연결하세요.");
-    return;
+    throw new Error("BLE가 연결되지 않았습니다. 먼저 BLE 버튼으로 보드에 연결하세요.");
   }
   setText("cmdState", "전송 중");
   for (const line of lines) {
@@ -3682,6 +3724,11 @@ async function finishInputShortOffsetCalibration() {
 
 async function startInternalTestDiagnostic() {
   if (state.offsetCalibration) throw new Error("Input-short offset 보정이 끝난 뒤 TEST를 실행하세요.");
+  if (state.testDiagnostic) return;
+  if (!state.bleRxCharacteristic) {
+    setText("adsTestResult", "TEST 실행 불가: 먼저 BLE 버튼으로 보드에 연결하세요.");
+    return;
+  }
   let mask = testChannelMask();
   if (!mask) {
     adsChannelRows().forEach(row => {
@@ -3698,13 +3745,21 @@ async function startInternalTestDiagnostic() {
   updateAdsChannelPreview();
   state.testRows = [];
   state.testDiagnostic = {
+    phase: "configuring",
+    createdAt: performance.now(),
     amplitude: $("adsTestAmp")?.value || "1X",
     frequency: $("adsTestFreq")?.value || "SLOW",
     channels: Array.from({ length: 8 }, (_, i) => i + 1).filter(channel => mask & (1 << (channel - 1)))
   };
   resetLiveStream("Internal TEST 준비: 이전 stream 데이터를 초기화했습니다.");
   setText("adsTestResult", "TEST 설정 중...");
-  await sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"]);
+  $("adsRunTestBtn").disabled = true;
+  try {
+    await sendAds1299Commands(["ADS1299 STOP", ...adsRuntimeConfigCommands(), "ADS1299 START"]);
+  } catch (error) {
+    failInternalTest(error.message || String(error));
+    throw error;
+  }
 }
 
 function adsPresetCommands(preset) {
@@ -3746,9 +3801,10 @@ function appendStreamLine(line, source) {
   const now = performance.now();
   state.lastPacketAt = now;
   const trimmed = line.trim();
+  handleInternalTestDeviceLine(trimmed);
   const cells = line.split(",").map(s => s.trim());
-  const allNumeric = cells.every(c => c !== "" && !Number.isNaN(Number.parseFloat(c)));
-  if (/^(AUTO|GPIO|MISO|SPI|BITBANG|STREAM)\b/i.test(trimmed)) {
+  const allNumeric = cells.every(c => c !== "" && Number.isFinite(Number(c)));
+  if (/^(AUTO|GPIO|MISO|SPI|BITBANG|STREAM|DATA_DIAG)\b/i.test(trimmed)) {
     logOnly(`${source}\n${trimmed}`);
     return;
   }
@@ -3785,7 +3841,8 @@ function appendStreamLine(line, source) {
   const obj = {};
   state.streamHeaders.forEach((h, i) => obj[h] = Number.parseFloat(cells[i]));
   const rawObj = { ...obj };
-  if (state.testDiagnostic) {
+  if (state.testDiagnostic?.phase === "collecting") {
+    state.testDiagnostic.lastSampleAt = performance.now();
     state.testRows.push(rawObj);
     if (state.testRows.length > 100000) state.testRows.shift();
     renderInternalTestResults();

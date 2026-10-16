@@ -72,5 +72,6 @@ int ads1299_read_register(uint8_t reg, uint8_t *value);
 int ads1299_write_register(uint8_t reg, uint8_t value);
 int ads1299_apply_config(const struct ads1299_config *config);
 int ads1299_read_sample(struct ads1299_sample *sample);
+int ads1299_data_diagnostic(char *response, size_t response_len);
 
 #endif
