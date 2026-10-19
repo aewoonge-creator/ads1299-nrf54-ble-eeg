@@ -45,6 +45,19 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await call('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/`});
     for (let i = 0; i < 100; i++) { if (await evaluate("typeof runSignalValidation === 'function' && document.querySelectorAll('[data-ads-ch]').length === 8")) break; await delay(100); }
     assert.equal(await evaluate("document.querySelectorAll('[data-ads-ch]').length"), 8);
+    if (process.env.ADS_GUI_LAYOUT_CHECK) {
+      const layout = await evaluate(`(() => {
+        const workspace = document.querySelector('.workspace').getBoundingClientRect();
+        const plot = $('plot').getBoundingClientRect();
+        return {miniPanel: !!$('channelPlots'), workspaceWidth: workspace.width, plotWidth: plot.width, plotHeight: plot.height,
+          channelSelectorPreserved: document.querySelector('.plotPanel').contains($('channels'))};
+      })()`);
+      assert.equal(layout.miniPanel, false);
+      assert.ok(layout.plotWidth > layout.workspaceWidth * .97, JSON.stringify(layout));
+      assert.ok(layout.plotHeight >= 520, JSON.stringify(layout));
+      assert.equal(layout.channelSelectorPreserved, true);
+      console.log('Desktop layout:', JSON.stringify(layout));
+    }
     // Bulk selector alone is not a device setting or a channel-table mutation.
     assert.equal(await evaluate("$('adsGain').value='6'; $('adsGain').dispatchEvent(new Event('change')); adsChannelRows()[0].querySelector('.ads-ch-gain').value"), '24');
     assert.equal(await evaluate("$('adsCopyGainBtn').click(); adsChannelRows()[0].querySelector('.ads-ch-gain').value"), '6');
@@ -69,9 +82,27 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(errors.length, 0, JSON.stringify(errors));
     const screenshot = process.env.ADS_GUI_SCREENSHOT;
     if (screenshot) {
-      await evaluate("$('validationResult').scrollIntoView({block:'center'})");
+      if (process.env.ADS_GUI_LAYOUT_CHECK) {
+        await evaluate(`(() => {
+          const channels = Array.from({length:8},(_,i)=>'ch'+(i+1));
+          const metadata = {adc_vref_volts:'4.5', configured_adc_sps:'250'};
+          channels.forEach((ch,i)=>metadata['channel_'+(i+1)+'_chnset_readback']='0x60');
+          const rows = Array.from({length:1000},(_,i)=>Object.fromEntries([['t_us',i*4000],...channels.map((ch,n)=>[ch,Math.round(1000*Math.sin(2*Math.PI*(n+2)*i/250))])]));
+          loadDataset(['t_us',...channels], rows, 'Synthetic layout check — not a hardware capture', {metadata});
+          state.view='raw'; draw(); $('plot').scrollIntoView({block:'center'});
+        })()`);
+      } else await evaluate("$('validationResult').scrollIntoView({block:'center'})");
       const capture = await call('Page.captureScreenshot', {format: 'png'});
       fs.writeFileSync(screenshot, Buffer.from(capture.data, 'base64'));
+    }
+    if (process.env.ADS_GUI_LAYOUT_CHECK) {
+      await call('Emulation.setDeviceMetricsOverride', {width:800,height:900,deviceScaleFactor:1,mobile:false});
+      await delay(100);
+      const narrow = await evaluate("({width:innerWidth, body:document.documentElement.scrollWidth, plot:$('plot').getBoundingClientRect().width, channelControls:!!$('selectAll')})");
+      assert.ok(narrow.body <= narrow.width + 1, JSON.stringify(narrow));
+      assert.ok(narrow.plot > 700, JSON.stringify(narrow));
+      assert.equal(narrow.channelControls, true);
+      console.log('Narrow layout:', JSON.stringify(narrow));
     }
     const roundtrip = await evaluate(`(async () => {
       // Simulator tests command/readback/export plumbing only, not physical BLE.

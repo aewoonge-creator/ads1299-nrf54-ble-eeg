@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EEG Plot Lab</title>
-  <meta name="app-version" content="2026-10-16-measurement-v7">
+  <meta name="app-version" content="2026-10-19-wide-plot-v7">
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -433,8 +433,8 @@
 
     .workspace {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 340px;
-      grid-template-rows: auto minmax(0, 1fr) minmax(180px, 0.48fr);
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
       gap: 14px;
       min-width: 0;
       min-height: 0;
@@ -488,7 +488,7 @@
 
     .plotPanel {
       grid-column: 1;
-      grid-row: 2 / 4;
+      grid-row: 2;
       display: flex;
       flex-direction: column;
       min-width: 0;
@@ -496,7 +496,7 @@
       overflow: auto;
     }
     .plotPanel > * { flex-shrink: 0; }
-    #plot { height: 440px; }
+    #plot { height: clamp(520px, 65vh, 900px); }
     #measurementSettings { white-space: pre-line; overflow-wrap: anywhere; }
     #validationPanel .analysisGrid { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
 
@@ -743,12 +743,10 @@
     }
 
     .sidePanel {
-      grid-column: 2;
-      grid-row: 3;
       padding: 12px;
       overflow: auto;
       min-height: 0;
-      max-height: none;
+      max-height: 300px;
     }
 
     .channels {
@@ -1374,17 +1372,6 @@
           <h2>상대 Power</h2>
           <div id="powerBars" class="powerGrid"></div>
         </div>
-      </div>
-
-      <div class="panel channelPlotPanel">
-        <div class="channelPlotHeader">
-          <h2>채널별 Plot</h2>
-          <span>선택된 EEG 채널을 raw 기준으로 각각 표시</span>
-        </div>
-        <div id="channelPlots" class="channelPlotGrid">
-          <div class="channelEmpty">CSV/ZIP 파일을 올리거나 BLE stream을 연결하면 채널별 그래프가 표시됩니다.</div>
-        </div>
-      </div>
 
       <div class="panel sidePanel">
         <h2>채널</h2>
@@ -1402,6 +1389,7 @@
         <div class="note">
           전극 이름과 개수는 dataset/장비마다 다릅니다. 채널은 CSV 컬럼에서 자동 탐지하고, 형식 안내는 알려진 dataset 패턴과 맞을 때만 표시합니다.
         </div>
+      </div>
       </div>
   </div>
 </main>
