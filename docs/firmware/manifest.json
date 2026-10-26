@@ -1,0 +1,38 @@
+{
+  "firmware_version": "2026-10-16-drdy-p111-v6",
+  "board": "nrf54l15dk/nrf54l15/cpuapp",
+  "sdk": "v2.9.3",
+  "hex_file": "ads1299-nrf54l15-2026-10-16-drdy-p111-v6.hex",
+  "sha256": "484604e138d9b2c271dcc0ee745329de4538f5aa02046525d81e8a718fb868c5",
+  "build_utc": "2026-10-26T02:29:00.8383754Z",
+  "drdy": "P1.11",
+  "start_stop": "SPI commands; no START GPIO",
+  "auto_probe": false,
+  "sources": [
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "90a41ac6bf531a5791a1d667561fbe7a6f22fd7b84f1e1ad9448f3675be0db41"
+    },
+    {
+      "path": "prj.conf",
+      "sha256": "a078025e4ba37f3302836495320ab36fa480cd32f5855de74ee38eb0eab66a23"
+    },
+    {
+      "path": "src/main.c",
+      "sha256": "74032966fb3af59fb6483b1aec1b4815981ccc236a5c0ecde4a80e5abf747e37"
+    },
+    {
+      "path": "src/ads1299.c",
+      "sha256": "c643a85a395a5845d851a578852311aeca5736a51f7cd4d55bfd9c76c10520e7"
+    },
+    {
+      "path": "src/ads1299.h",
+      "sha256": "9c2a492985a1d23ad434563b29a7a5155c1f65993e592b73ddef4b2f4c02e1df"
+    },
+    {
+      "path": "boards/nrf54l15dk_nrf54l15_cpuapp.overlay",
+      "sha256": "dca557fcbe22d6ff8a88c77c91801761203082f72b6bd1d201aa0b7989b42c78"
+    }
+  ],
+  "validation": "Compiled from repository sources; not flashed or wirelessly measured in this build."
+}

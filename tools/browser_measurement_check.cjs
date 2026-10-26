@@ -174,9 +174,16 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       for (let i = 0; i < 300 && (state.commandJobs || state.streamSampleCount < 100); i++) await delay(20);
       checkStreamStart();
       const second = {samples: state.streamSampleCount, jobs: state.commandJobs, fault: state.commandFault, verified: state.bleVerified};
+      appendStreamLine('AUTO RESET_PROBE ID=0x3E', 'BLE');
+      const warningVisible = !$('firmwareWarning').hidden;
+      let legacyBlocked = '';
+      try { await sendAds1299Command('ADS1299 START'); } catch (error) { legacyBlocked = error.message; }
+      await connectBle();
+      const warningCleared = $('firmwareWarning').hidden && !state.firmwareIssue;
       releaseBleConnection();
       delete navigator.bluetooth;
-      return {verified, first, second, failure, failedState, overlaps, responseWrites, noResponseWrites};
+      return {verified, first, second, failure, failedState, overlaps, responseWrites, noResponseWrites,
+        warningVisible, legacyBlocked, warningCleared};
     })()`);
     assert.equal(bleCheck.verified, true);
     assert.equal(bleCheck.first.samples, 100);
@@ -192,6 +199,9 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(bleCheck.second.verified, true);
     assert.equal(bleCheck.overlaps, 0);
     assert.equal(bleCheck.noResponseWrites, 0);
+    assert.equal(bleCheck.warningVisible, true);
+    assert.match(bleCheck.legacyBlocked, /구형 자동 진단/);
+    assert.equal(bleCheck.warningCleared, true);
     console.log('Simulated BLE lifecycle:', JSON.stringify(bleCheck));
     const roundtrip = await evaluate(`(async () => {
       // Simulator tests command/readback/export plumbing only, not physical BLE.
@@ -242,6 +252,22 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.notEqual(roundtrip.expected, roundtrip.readback); assert.equal(roundtrip.readback, roundtrip.applied);
     assert.deepEqual(roundtrip.rows.map(r => r.ch1), [-8388608,1234,8388607]);
     assert.notEqual(roundtrip.timestamp, 'UNKNOWN');
+    if (process.env.ADS_GUI_FIRMWARE_SCREENSHOT) {
+      await evaluate("observeFirmwareLine('FW VERSION 2026-09-09-gain-sync-v1')");
+      for (const width of [1600, 390]) {
+        await call('Emulation.setDeviceMetricsOverride', {width, height:900, deviceScaleFactor:1, mobile:false});
+        await evaluate("$('firmwareWarning').scrollIntoView({block:'center'})");
+        const bounds = await evaluate(`(() => {
+          const element = $('firmwareWarning'), rect = element.getBoundingClientRect();
+          return {hidden:element.hidden, left:rect.left, right:rect.right, width:element.clientWidth, content:element.scrollWidth};
+        })()`);
+        assert.equal(bounds.hidden, false);
+        assert.ok(bounds.left >= 0 && bounds.right <= width + 1, JSON.stringify(bounds));
+        assert.ok(bounds.content <= bounds.width + 1, JSON.stringify(bounds));
+        const capture = await call('Page.captureScreenshot', {format:'png'});
+        fs.writeFileSync(`${process.env.ADS_GUI_FIRMWARE_SCREENSHOT}-${width}.png`, Buffer.from(capture.data, 'base64'));
+      }
+    }
     assert.equal(errors.length, 0, JSON.stringify(errors));
     console.log(JSON.stringify({browserErrors: errors.length, checks: 'gain copy/readback isolation; CSV raw preservation; four-file load, µV plot and worker sine analysis; simulated ACK/readback; schema2 roundtrip; recording config lock', reports, roundtrip, screenshot}, null, 2));
   } finally { socket?.close(); browser.kill(); server.close(); }

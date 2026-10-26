@@ -966,6 +966,12 @@
         <div class="statusCard"><strong>저장 시간</strong><span id="recordTimer">00:00.0</span></div>
       </div>
       <p id="bleDiagnostic" role="status" style="overflow-wrap:anywhere">BLE 미연결</p>
+      <p>보드 펌웨어: <span id="boardFirmwareVersion">미확인</span></p>
+      <div id="firmwareWarning" hidden role="alert">
+        <p id="firmwareWarningText"></p>
+        <a href="firmware/ads1299-nrf54l15-2026-10-16-drdy-p111-v6.hex" download>nRF54L15 DK 펌웨어 다운로드</a>
+        · <a href="https://github.com/aewoonge-creator/ads1299-nrf54-ble-eeg/blob/main/FIRMWARE_UPDATE.md" target="_blank" rel="noopener">업데이트 절차</a>
+      </div>
       <div class="row">
         <button id="serialBtn" class="primary">USB Serial</button>
         <button id="bleBtn" class="primary">BLE</button>
@@ -1442,6 +1448,9 @@ const state = {
   bleDisconnectHandler: null,
   bleConnecting: false,
   bleVerified: false,
+  firmwareVersion: "",
+  firmwareIssue: "",
+  legacyAutoProbeDetected: false,
   streamStartWatch: null,
   streamStartedAt: 0,
   streamStoppedAt: 0,
@@ -2175,6 +2184,7 @@ function rememberManualRegisterWrite(addrText, valueText) {
 
 function updateAdsRegisterValueFromLine(line) {
   const text = String(line).trim();
+  observeFirmwareLine(text);
   handleCommandResponse(text);
   if (/^FW STATE\b/i.test(text)) {
     const rateLine = /\bRATE=(\d+)/i.exec(text);
@@ -3652,6 +3662,10 @@ async function connectBle() {
     state.bleRxCharacteristic = rx;
     state.commandFault = false;
     state.commandError = null;
+    state.firmwareVersion = "";
+    state.firmwareIssue = "";
+    state.legacyAutoProbeDetected = false;
+    renderFirmwareStatus();
     for (const map of [adsRegisterValues, adsRegisterTimes, adsAppliedRegisters]) for (const key of Object.keys(map)) delete map[key];
     state.hardwareVrefVolts = NaN;
     state.datasetContext = null;
@@ -3672,6 +3686,13 @@ async function connectBle() {
     await sendAds1299Commands(["PING", "ADS1299 VERSION"], true);
     checkSession();
     state.bleVerified = true;
+    if (state.firmwareIssue) {
+      state.commandError = state.firmwareIssue;
+      updateConnectionCards();
+      setText("bleDiagnostic", state.firmwareIssue);
+      status(state.firmwareIssue);
+      return;
+    }
     updateConnectionCards();
     setText("bleDiagnostic", "보드 응답 확인 완료 · Start 대기");
     status(`BLE 연결 및 보드 응답 확인 완료: ${device.name || "unnamed"}`);
@@ -3720,6 +3741,41 @@ function updateCommandStatus() {
     : state.commandFault || state.commandError ? "오류"
     : state.activeCommand ? "전송 중"
     : state.bleConnecting && !state.bleVerified ? "연결 확인 중" : "준비됨");
+}
+
+function renderFirmwareStatus() {
+  setText("boardFirmwareVersion", state.firmwareVersion || "미확인");
+  setText("firmwareWarningText", state.firmwareIssue || "");
+  const warning = $("firmwareWarning");
+  if (warning) warning.hidden = !state.firmwareIssue;
+}
+
+function observeFirmwareLine(text) {
+  const version = /^FW VERSION\s+(.+)$/.exec(text);
+  if (version) state.firmwareVersion = version[1].trim();
+  if (/^AUTO (?:SPI PROBE|BITBANG PROBE|RESET[ _]PROBE)\b/i.test(text)) state.legacyAutoProbeDetected = true;
+  const legacyVersion = /(?:gain-sync-v1|drdy-stream-v2|test-cal-v4)$/.test(state.firmwareVersion || "");
+  if (state.legacyAutoProbeDetected || legacyVersion) {
+    state.firmwareIssue = "구형 자동 진단 펌웨어 감지: AUTO RESET/SPI PROBE가 ADS1299 설정을 변경해 Start를 방해합니다. nRF54L15 DK 펌웨어를 USB로 업데이트하세요. 웹 새로고침만으로는 보드가 업데이트되지 않습니다.";
+    state.commandError = state.firmwareIssue;
+    setText("bleDiagnostic", state.firmwareIssue);
+    if (state.pendingCommand && /^ADS1299 (?:INIT|CONFIG|WREG|CHANNELS|STREAM|START|TEST)\b/.test(state.pendingCommand.line)) {
+      state.pendingCommand.reject(new Error(state.firmwareIssue));
+    }
+    updateCommandStatus();
+  }
+  if (version || state.firmwareIssue) renderFirmwareStatus();
+}
+
+function assertAdsStartReadback() {
+  const name = addr => `${adsRegisters.find(reg => reg.addr === Number(addr))?.name || 'REG'}(${hexAddr(Number(addr))})`;
+  const absent = Array.from({length:8}, (_, i) => i + 5).filter(addr => !Number.isFinite(adsRegisterValues[addr]));
+  const mismatched = Object.entries(adsAppliedRegisters).filter(([addr, value]) => adsRegisterValues[addr] !== value);
+  if (!absent.length && !mismatched.length) return;
+  const details = [];
+  if (absent.length) details.push(`읽기 미확인: ${absent.map(name).join(', ')}`);
+  if (mismatched.length) details.push(`설정 불일치: ${mismatched.map(([addr, value]) => `${name(addr)} 쓰기 ACK=${hexByte(value)}, 실제=${Number.isFinite(adsRegisterValues[addr]) ? hexByte(adsRegisterValues[addr]) : '미확인'}`).join('; ')}`);
+  throw new Error(`Start 중단 · ${details.join(' / ')}. 보드 펌웨어: ${state.firmwareVersion || '미확인'}. Read Regs와 Register Map을 확인하세요.`);
 }
 
 async function writeBleCommandLine(line, session = state.bleSession) {
@@ -3784,10 +3840,9 @@ function queueAdsCommands(lines) {
     state.commandError = null;
     for (const line of lines) {
       if (session !== state.bleSession) throw new Error("이전 BLE 연결의 명령을 취소했습니다.");
+      if (state.firmwareIssue && /^ADS1299 (?:INIT|CONFIG|WREG|CHANNELS|STREAM|START|TEST)\b/.test(line)) throw new Error(state.firmwareIssue);
       if (line === 'ADS1299 START') {
-        const absent = Array.from({length:8}, (_, i) => i + 5).filter(addr => !Number.isFinite(adsRegisterValues[addr]));
-        const mismatched = Object.entries(adsAppliedRegisters).filter(([addr, value]) => adsRegisterValues[addr] !== value);
-        if (absent.length || mismatched.length) throw new Error('Start 중단: 채널 readback 미확인 또는 ACK/readback 불일치. Read Regs와 Register Map을 확인하세요.');
+        assertAdsStartReadback();
       }
       const mutation = /^ADS1299 (?:INIT|RESET|CONFIG|WREG|CHANNELS|STREAM|START|TEST|SPI|BITBANG)\b/i.test(line);
       if (state.recording && (mutation || /^ADS1299 RREG\b/.test(line))) throw new Error('먼저 저장 멈춤을 누르세요. 설정 변경/레지스터 읽기는 녹화 사이에 실행하세요.');
@@ -4076,6 +4131,7 @@ function appendStreamLine(line, source) {
   const cells = line.split(",").map(s => s.trim());
   const allNumeric = cells.every(c => c !== "" && Number.isFinite(Number(c)));
   if (/^(AUTO|GPIO|MISO|SPI|BITBANG|STREAM|DATA_DIAG)\b/i.test(trimmed)) {
+    if (/^AUTO\b/i.test(trimmed)) observeFirmwareLine(trimmed);
     logOnly(`${source}\n${trimmed}`);
     return;
   }
@@ -4318,7 +4374,7 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     : "";
   return [
     '# metadata_schema_version=2',
-    '# gui_version=2026-10-26-ble-command-v8',
+    '# gui_version=2026-10-26-firmware-check-v9',
     `# configuration_version=${settings.configRevision}`,
     `# requested_sps=${settings.requestedSps}`,
     `# configured_adc_sps=${settings.rate}`,

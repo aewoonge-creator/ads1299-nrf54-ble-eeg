@@ -18,6 +18,7 @@ parser.add_argument('--serial', type=int, required=True)
 parser.add_argument('--dll', required=True)
 parser.add_argument('--seconds', type=float, default=30)
 parser.add_argument('--mode', choices=['test', 'short'], default='test')
+parser.add_argument('--check-readback', action='store_true', help='Verify all eight channel registers across the old 3-second auto-reset interval')
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
 p = pylink.JLink(lib=pylink.library.Library(dllpath=args.dll))
@@ -26,6 +27,7 @@ rows = []
 messages = []
 bad = []
 collect = False
+readback_check = None
 
 def drain():
     global buffer
@@ -75,6 +77,23 @@ try:
     command('ADS1299 INIT')
     mux, test = ('NORMAL', 'ON') if args.mode == 'test' else ('SHORTED', 'OFF')
     command(f'ADS1299 CONFIG RATE=250 GAIN=24 REF=DIFFERENTIAL MUX={mux} BIAS=OFF LOFF=OFF TEST={test} TEST_AMP=1X TEST_FREQ=SLOW MASK=0xFF')
+    if args.check_readback:
+        expected = 0x65 if args.mode == 'test' else 0x61
+        snapshots = []
+        for attempt in range(2):
+            if attempt:
+                pump(4)
+            snapshot = {}
+            for addr in range(5, 13):
+                start = len(messages)
+                command(f'ADS1299 RREG 0x{addr:02X}')
+                matches = [re.fullmatch(r'REG 0x([0-9A-Fa-f]+) 0x([0-9A-Fa-f]+)', s) for s in messages[start:]]
+                values = [int(m[2], 16) for m in matches if m and int(m[1], 16) == addr]
+                if values != [expected]:
+                    raise RuntimeError(f'Channel readback mismatch at 0x{addr:02X}: {values}, expected {expected}')
+                snapshot[f'0x{addr:02X}'] = values[0]
+            snapshots.append(snapshot)
+        readback_check = dict(passed=True, wait_seconds=4, expected=expected, snapshots=snapshots)
     for addr in [1, 2, 3, 5, 12, 21]:
         command(f'ADS1299 RREG {addr}')
     command('ADS1299 START')
@@ -96,6 +115,7 @@ if len(rows) < 2:
 intervals = [b[0] - a[0] for a, b in zip(rows, rows[1:])]
 period = statistics.median(intervals)
 report = dict(transport='RTT (not BLE)', mode=args.mode, samples=len(rows),
+    readback_check=readback_check,
     duration_s=(rows[-1][0] - rows[0][0]) / 1e6,
     rate_hz=(len(rows) - 1) * 1e6 / (rows[-1][0] - rows[0][0]),
     median_interval_us=period, max_interval_us=max(intervals),

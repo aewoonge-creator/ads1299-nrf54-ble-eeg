@@ -1,0 +1,2 @@
+# Preserve downloadable firmware bytes so manifest SHA256 matches GitHub Pages.
+docs/firmware/*.hex binary

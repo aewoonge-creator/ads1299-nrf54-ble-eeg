@@ -12,6 +12,9 @@ function harness(overrides = {}) {
     bleSession: 0, bleRxCharacteristic: {}, streamSampleCount: 0};
   const c = vm.createContext({state, TextEncoder, TextDecoder, setTimeout, clearTimeout,
     performance: {now: () => 100}, adsRegisterValues: {}, adsRegisterTimes: {}, adsAppliedRegisters: {},
+    $: () => null, adsRegisters: Array.from({length: 8}, (_, i) => ({addr: i + 5, name: `CH${i + 1}SET`})),
+    hexAddr: v => '0x' + v.toString(16).padStart(2, '0').toUpperCase(),
+    hexByte: v => '0x' + v.toString(16).padStart(2, '0').toUpperCase(),
     setText: (key, value) => { messages[key] = value; }, status: value => {messages.status = value;},
     logOnly: () => {}, renderAdsRegisterMap: () => {}, ...overrides});
   vm.runInContext(html.slice(html.indexOf('async function sendAds1299Command('), html.indexOf('function adsConfigCommand(')), c);
@@ -176,4 +179,45 @@ test('START acknowledgement without samples reports a separate acquisition error
   state.streamSampleCount = 1;
   c.checkStreamStart(200);
   assert.equal(messages.bleDiagnostic, 'EEG 샘플 수신 중');
+});
+
+test('legacy firmware is identified and configuration is blocked, but STOP still works', async () => {
+  const {c, state, messages} = harness();
+  const sent = [];
+  c.writeBleCommandLine = async line => { sent.push(line); c.handleCommandResponse('OK STOP'); };
+  c.observeFirmwareLine('FW VERSION 2026-09-09-gain-sync-v1');
+  assert.match(state.firmwareIssue, /구형 자동 진단/);
+  assert.equal(messages.boardFirmwareVersion, '2026-09-09-gain-sync-v1');
+  await assert.rejects(c.sendAds1299Commands(['ADS1299 CONFIG RATE=250']), /USB로 업데이트/);
+  await c.sendAds1299Commands(['ADS1299 STOP']);
+  assert.deepEqual(sent, ['ADS1299 STOP']);
+});
+
+test('AUTO probe notification rejects an in-flight configuration without waiting for timeout', async () => {
+  const {c, state} = harness();
+  c.writeBleCommandLine = async () => {};
+  const rejected = assert.rejects(c.sendAds1299Commands(['ADS1299 WREG 0x05 0x60']), /구형 자동 진단/);
+  await tick();
+  c.observeFirmwareLine('AUTO RESET_PROBE ID=0x3E');
+  await rejected;
+  assert.equal(state.pendingCommand, null);
+  assert.equal(state.legacyAutoProbeDetected, true);
+});
+
+test('current firmware is displayed without a legacy warning', () => {
+  const {c, state, messages} = harness();
+  c.observeFirmwareLine('FW VERSION 2026-10-16-drdy-p111-v6');
+  assert.equal(state.firmwareIssue, undefined);
+  assert.equal(messages.boardFirmwareVersion, '2026-10-16-drdy-p111-v6');
+});
+
+test('START reports actual missing and mismatched channel registers without writing START', async () => {
+  const {c} = harness();
+  let writes = 0;
+  c.writeBleCommandLine = async () => { writes++; };
+  await assert.rejects(c.sendAds1299Commands(['ADS1299 START']), /읽기 미확인: CH1SET\(0x05\)/);
+  for (let addr = 5; addr <= 12; addr++) c.adsRegisterValues[addr] = 0x60;
+  c.adsAppliedRegisters[5] = 0x50;
+  await assert.rejects(c.sendAds1299Commands(['ADS1299 START']), /CH1SET\(0x05\) 쓰기 ACK=0x50, 실제=0x60/);
+  assert.equal(writes, 0);
 });
