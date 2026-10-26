@@ -104,6 +104,95 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.equal(narrow.channelControls, true);
       console.log('Narrow layout:', JSON.stringify(narrow));
     }
+    const bleCheck = await evaluate(`(async () => {
+      // Exercise the real GUI transport against a simulated GATT peripheral.
+      const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+      const registers = Array(24).fill(0); registers[0] = 0x3E;
+      const device = new EventTarget(), tx = new EventTarget();
+      let buffer = '', writes = 0, overlaps = 0, responseWrites = 0, noResponseWrites = 0;
+      let dropStop = false;
+      device.name = 'Simulated ADS1299';
+      const notify = text => {
+        for (let i = 0; i < text.length; i += 20) {
+          tx.value = new DataView(new TextEncoder().encode(text.slice(i, i + 20)).buffer);
+          tx.dispatchEvent(new Event('characteristicvaluechanged'));
+        }
+      };
+      tx.startNotifications = async () => { notify('READY ADS1299 test peripheral\\n'); return tx; };
+      const handle = line => {
+        if (dropStop && line === 'ADS1299 STOP') return;
+        notify('RX ' + line + '\\n');
+        const words = line.split(' ');
+        if (line === 'PING') notify('PONG\\n');
+        else if (line === 'ADS1299 VERSION') notify('FW VERSION simulated-v6\\n');
+        else if (words[1] === 'RREG') notify('REG ' + hexAddr(Number(words[2])) + ' ' + hexByte(registers[Number(words[2])]) + '\\n');
+        else {
+          if (words[1] === 'WREG') registers[Number(words[2])] = Number(words[3]);
+          if (words[1] === 'CONFIG') registers[1] = 0x96;
+          notify('OK ' + words[1] + '\\n');
+          if (words[1] === 'CONFIG') notify('FW STATE CONFIG RATE=250 GAIN=24 VREF_MV=4500\\n');
+          if (words[1] === 'START') setTimeout(() => {
+            notify('t_us,ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8\\n');
+            for (let i = 0; i < 100; i++) notify((i * 4000) + ',' + Array.from({length:8}, (_, ch) => Math.round(1000 * Math.sin(i / 5 + ch))).join(',') + '\\n');
+          }, 30);
+        }
+      };
+      const rx = {
+        properties: {write: true, writeWithoutResponse: true},
+        writeValueWithResponse: async chunk => {
+          responseWrites++;
+          if (writes++) overlaps++;
+          buffer += new TextDecoder().decode(chunk);
+          const lines = buffer.split('\\n'); buffer = lines.pop();
+          lines.filter(Boolean).forEach(handle);
+          await delay(4); // Board notification intentionally precedes GATT completion.
+          writes--;
+        },
+        writeValueWithoutResponse: async () => {noResponseWrites++;}
+      };
+      device.gatt = {
+        connected: false,
+        connect: async () => {device.gatt.connected = true; return device.gatt;},
+        disconnect: () => {device.gatt.connected = false; device.dispatchEvent(new Event('gattserverdisconnected'));},
+        getPrimaryService: async () => ({getCharacteristic: async uuid => uuid === $('bleChar').value ? tx : rx})
+      };
+      Object.defineProperty(navigator, 'bluetooth', {configurable: true, value: {requestDevice: async () => device}});
+      await connectBle();
+      const verified = state.bleVerified;
+      $('adsStartBtn').click();
+      for (let i = 0; i < 300 && (state.commandJobs || state.streamSampleCount < 100); i++) await delay(20);
+      checkStreamStart();
+      const first = {samples: state.streamSampleCount, pending: state.pendingCommand, fault: state.commandFault,
+        applied: adsAppliedRegisters[5], readback: adsRegisterValues[5], detail: $('bleDiagnostic').textContent};
+      dropStop = true;
+      let failure = '';
+      try { await sendAds1299Command('ADS1299 STOP'); } catch (error) {failure = error.message;}
+      const failedState = $('cmdState').textContent;
+      dropStop = false;
+      await connectBle(); // Same device/characteristic objects: listeners must not accumulate.
+      $('adsStartBtn').click();
+      for (let i = 0; i < 300 && (state.commandJobs || state.streamSampleCount < 100); i++) await delay(20);
+      checkStreamStart();
+      const second = {samples: state.streamSampleCount, jobs: state.commandJobs, fault: state.commandFault, verified: state.bleVerified};
+      releaseBleConnection();
+      delete navigator.bluetooth;
+      return {verified, first, second, failure, failedState, overlaps, responseWrites, noResponseWrites};
+    })()`);
+    assert.equal(bleCheck.verified, true);
+    assert.equal(bleCheck.first.samples, 100);
+    assert.equal(bleCheck.first.pending, null);
+    assert.equal(bleCheck.first.fault, false);
+    assert.equal(bleCheck.first.applied, bleCheck.first.readback);
+    assert.match(bleCheck.first.detail, /샘플 수신 중/);
+    assert.match(bleCheck.failure, /ADS1299 STOP:.*응답 시간 초과/);
+    assert.equal(bleCheck.failedState, '오류');
+    assert.equal(bleCheck.second.samples, 100);
+    assert.equal(bleCheck.second.jobs, 0);
+    assert.equal(bleCheck.second.fault, false);
+    assert.equal(bleCheck.second.verified, true);
+    assert.equal(bleCheck.overlaps, 0);
+    assert.equal(bleCheck.noResponseWrites, 0);
+    console.log('Simulated BLE lifecycle:', JSON.stringify(bleCheck));
     const roundtrip = await evaluate(`(async () => {
       // Simulator tests command/readback/export plumbing only, not physical BLE.
       const registers = Array(24).fill(0); const sent = [];
@@ -118,6 +207,9 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
           registers[1] = 0x96;
         } else if (line === 'ADS1299 RREG ALL') {
           registers.forEach((value, i) => updateAdsRegisterValueFromLine('REG '+hexByte(i)+' '+hexByte(value)));
+        } else if (line.startsWith('ADS1299 RREG 0x')) {
+          const addr = Number(line.split(' ').pop());
+          updateAdsRegisterValueFromLine('REG '+hexByte(addr)+' '+hexByte(registers[addr]));
         } else if (line.startsWith('ADS1299 STREAM')) updateAdsRegisterValueFromLine('OK STREAM MASK');
         else if (line === 'ADS1299 STOP') updateAdsRegisterValueFromLine('OK STOP');
         else if (line === 'ADS1299 START') updateAdsRegisterValueFromLine('OK START');

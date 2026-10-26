@@ -1,6 +1,16 @@
 # ADS1299 nRF54 BLE EEG
 
-[웹 GUI 바로 열기 - 채널별 Gain / 측정 검증 v7](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-16-measurement-v7)
+[웹 GUI 바로 열기 - BLE 명령 처리 수정 v8](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-26-ble-command-v8)
+
+## GUI v8: BLE 명령 대기 및 재연결 수정 (2026-10-26)
+
+- 명령은 GATT write-with-response를 우선 사용하고, 쓰기 완료와 보드 ACK를 모두 확인한 뒤 다음 명령을 보냅니다. 실패한 조각을 다른 write API로 다시 보내지 않습니다.
+- BLE 연결 시 PONG과 펌웨어 VERSION 응답을 확인합니다. 재연결 시 이전 수신 콜백과 대기 명령을 정리합니다.
+- 설정/Start의 레지스터 확인은 24개 개별 요청으로 순차 진행합니다. 응답 누락을 무시하거나 ACK를 실제 readback으로 대신하지 않습니다.
+- 실패하면 `전송 중` 대신 `오류`를 표시합니다. 연결 상태 아래에 실패한 명령, 보드 수신 확인 여부, 마지막 응답을 남깁니다. START 응답 후 5초 동안 샘플이 없으면 별도 수집 오류를 표시합니다.
+- 이전 GUI 탭을 닫고 위 링크를 열어 `BLE`로 연결하세요. `보드 응답 확인 완료` 후 `Start`를 누릅니다. `PING` 응답부터 없다면 보드 전원과 다른 앱/탭의 BLE 점유를 확인하세요. START는 확인됐지만 샘플이 없다면 STREAM 로그와 ADS1299 전원/DRDY 배선을 확인하세요.
+
+GUI만 변경했으며 펌웨어 재플래시는 필요하지 않습니다. 자동 테스트 및 모의 BLE 브라우저 검증 범위는 [v8 검증 기록](validation-v8.md)을 참고하세요. 실제 무선 수집은 이 PC에서 검증하지 못했습니다.
 
 ## GUI v7: 설정 확인과 신호 검증
 

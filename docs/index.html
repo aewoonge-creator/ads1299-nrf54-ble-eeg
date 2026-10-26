@@ -965,6 +965,7 @@
         <div class="statusCard"><strong>경과 시간</strong><span id="streamTimer">00:00.0</span></div>
         <div class="statusCard"><strong>저장 시간</strong><span id="recordTimer">00:00.0</span></div>
       </div>
+      <p id="bleDiagnostic" role="status" style="overflow-wrap:anywhere">BLE 미연결</p>
       <div class="row">
         <button id="serialBtn" class="primary">USB Serial</button>
         <button id="bleBtn" class="primary">BLE</button>
@@ -1436,6 +1437,12 @@ const state = {
   bleDevice: null,
   bleRxCharacteristic: null,
   bleTxCharacteristic: null,
+  bleSession: 0,
+  bleNotificationHandler: null,
+  bleDisconnectHandler: null,
+  bleConnecting: false,
+  bleVerified: false,
+  streamStartWatch: null,
   streamStartedAt: 0,
   streamStoppedAt: 0,
   lastPacketAt: 0,
@@ -1451,6 +1458,8 @@ const state = {
   commandChain: Promise.resolve(),
   commandJobs: 0,
   commandFault: false,
+  commandError: null,
+  activeCommand: null,
   pendingCommand: null,
   testRows: [],
   testDiagnostic: null,
@@ -1773,7 +1782,7 @@ function adsFullConfigCommands() {
   return [
     ...adsGlobalConfigCommands(),
     ...adsChannelTableCommands(),
-    "ADS1299 RREG ALL"
+    ...adsReadConfigAndChannelCommands()
   ];
 }
 
@@ -1781,12 +1790,12 @@ function adsRuntimeConfigCommands() {
   return [
     ...adsGlobalConfigCommands(),
     ...adsChannelTableCommands(),
-    "ADS1299 RREG ALL"
+    ...adsReadConfigAndChannelCommands()
   ];
 }
 
 function adsReadConfigAndChannelCommands() {
-  return ["ADS1299 RREG ALL"];
+  return Array.from({length: 24}, (_, addr) => `ADS1299 RREG ${hexAddr(addr)}`);
 }
 
 function currentPlotTargetLabel() {
@@ -2226,7 +2235,7 @@ function appendLog(msg) {
 
 function updateConnectionCards() {
   setText("bleState", state.bleDevice?.gatt?.connected ? "연결됨" : "대기");
-  setText("cmdState", state.bleRxCharacteristic ? "준비됨" : "미연결");
+  updateCommandStatus();
   setText("sampleCount", String(state.streamSampleCount || state.streamRows.length));
   updateTimers();
   if (state.streamStartedAt && (state.streamSampleCount || state.streamRows.length) > 1) {
@@ -3590,6 +3599,7 @@ async function connectSerial() {
 }
 
 async function connectBle() {
+  if (state.bleConnecting) return;
   if (!("bluetooth" in navigator)) {
     status("이 브라우저는 Web Bluetooth를 지원하지 않습니다. Chrome/Edge와 localhost가 필요합니다.");
     return;
@@ -3602,132 +3612,178 @@ async function connectBle() {
     return;
   }
   status("BLE 장치 선택창을 여는 중입니다. ADS1299_NRF54를 선택하세요.");
-  const device = await navigator.bluetooth.requestDevice({
-    acceptAllDevices: true,
-    optionalServices: [service]
-  });
-  device.addEventListener("gattserverdisconnected", () => {
-    state.pendingCommand?.reject(new Error('BLE 연결 해제'));
-    state.bleDevice = null;
-    state.bleRxCharacteristic = null;
-    state.bleTxCharacteristic = null;
+  state.bleConnecting = true;
+  $("bleBtn").disabled = true;
+  let session;
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [service]
+    });
+    releaseBleConnection();
+    session = state.bleSession;
+    state.bleDevice = device;
+    state.bleDisconnectHandler = () => {
+      if (session !== state.bleSession) return;
+      releaseBleConnection();
+      status("BLE 연결이 해제되었습니다.");
+    };
+    device.addEventListener("gattserverdisconnected", state.bleDisconnectHandler);
+    const checkSession = () => {
+      if (session !== state.bleSession) throw new Error("BLE 연결이 변경되었습니다. 다시 연결하세요.");
+    };
+    const server = await device.gatt.connect();
+    checkSession();
+    const svc = await server.getPrimaryService(service);
+    checkSession();
+    const ch = await svc.getCharacteristic(characteristic);
+    checkSession();
+    const rx = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
+    checkSession();
+    if (!rx) throw new Error("BLE write characteristic UUID가 필요합니다.");
+    appendStreamText.buffer = "";
+    const decoder = new TextDecoder();
+    state.bleNotificationHandler = e => {
+      if (session !== state.bleSession) return;
+      const text = decoder.decode(e.target.value, {stream: true});
+      appendStreamText(text, `BLE ${device.name || ""}`.trim());
+    };
+    state.bleTxCharacteristic = ch;
+    state.bleRxCharacteristic = rx;
+    state.commandFault = false;
+    state.commandError = null;
+    for (const map of [adsRegisterValues, adsRegisterTimes, adsAppliedRegisters]) for (const key of Object.keys(map)) delete map[key];
+    state.hardwareVrefVolts = NaN;
+    state.datasetContext = null;
+    state.streamStartedAt = performance.now();
+    state.streamStoppedAt = 0;
+    state.streamHeaders = null;
+    state.streamRows = [];
+    state.streamSampleCount = 0;
+    state.adsDesiredChannels = null;
+    if (state.recording) stopRecordingWindow();
+    else resetRecording();
+    // Subscribe before enabling notifications so immediate replies are not lost.
+    ch.addEventListener("characteristicvaluechanged", state.bleNotificationHandler);
+    await ch.startNotifications();
+    checkSession();
     updateConnectionCards();
-    status("BLE 연결이 해제되었습니다.");
-  });
-  const server = await device.gatt.connect();
-  const svc = await server.getPrimaryService(service);
-  const ch = await svc.getCharacteristic(characteristic);
+    setText("bleDiagnostic", "GATT 연결됨 · 보드 PONG 응답 확인 중");
+    await sendAds1299Commands(["PING", "ADS1299 VERSION"], true);
+    checkSession();
+    state.bleVerified = true;
+    updateConnectionCards();
+    setText("bleDiagnostic", "보드 응답 확인 완료 · Start 대기");
+    status(`BLE 연결 및 보드 응답 확인 완료: ${device.name || "unnamed"}`);
+  } catch (error) {
+    if (session !== undefined && session === state.bleSession) {
+      releaseBleConnection();
+      setText("bleDiagnostic", `BLE 연결 확인 실패: ${error.message}`);
+    }
+    throw error;
+  } finally {
+    state.bleConnecting = false;
+    $("bleBtn").disabled = false;
+  }
+}
+
+function releaseBleConnection() {
+  const device = state.bleDevice;
+  state.bleSession++;
+  state.pendingCommand?.reject(new Error("BLE 연결 해제"));
+  if (state.bleNotificationHandler) state.bleTxCharacteristic?.removeEventListener("characteristicvaluechanged", state.bleNotificationHandler);
+  if (state.bleDisconnectHandler) device?.removeEventListener("gattserverdisconnected", state.bleDisconnectHandler);
+  state.bleDevice = state.bleRxCharacteristic = state.bleTxCharacteristic = null;
+  state.bleNotificationHandler = state.bleDisconnectHandler = null;
+  state.bleVerified = false;
+  state.streamStartWatch = null;
+  state.activeCommand = null;
+  state.commandChain = Promise.resolve();
   appendStreamText.buffer = "";
-  await ch.startNotifications();
-  ch.addEventListener("characteristicvaluechanged", e => {
-    const text = new TextDecoder().decode(e.target.value);
-    appendStreamText(text, `BLE ${device.name || ""}`.trim());
-  });
-  state.bleDevice = device;
-  state.bleTxCharacteristic = ch;
-  state.bleRxCharacteristic = rxCharacteristic ? await svc.getCharacteristic(rxCharacteristic) : null;
-  state.commandFault = false;
-  for (const map of [adsRegisterValues, adsRegisterTimes, adsAppliedRegisters]) for (const key of Object.keys(map)) delete map[key];
-  state.hardwareVrefVolts = NaN;
-  state.datasetContext = null;
-  state.streamStartedAt = performance.now();
-  state.streamStoppedAt = 0;
-  state.streamHeaders = null;
-  state.streamRows = [];
-  state.streamSampleCount = 0;
-  state.adsDesiredChannels = null;
   if (state.recording) stopRecordingWindow();
-  else resetRecording();
+  if (device?.gatt?.connected) device.gatt.disconnect();
   updateConnectionCards();
-  status(`BLE 연결됨: ${device.name || "unnamed"}\nADS1299 명령과 CSV notification을 사용할 수 있습니다.`);
-  sendAds1299Command("ADS1299 VERSION").catch(() => {});
+  setText("bleDiagnostic", "BLE 미연결");
 }
 
 async function sendAds1299Command(command) {
   if (!state.bleRxCharacteristic) {
-    status("BLE write characteristic이 아직 연결되지 않았습니다. 먼저 BLE 버튼으로 연결하세요.");
-    return;
+    throw new Error("BLE write characteristic이 아직 연결되지 않았습니다. 먼저 BLE 버튼으로 연결하세요.");
   }
   const line = command.trim();
   if (!line) return;
-  setText("cmdState", "전송 중");
-  await queueAdsCommands([line]);
-  setText("cmdState", "준비됨");
-  status(`명령 전송됨:\n${line}`);
+  await sendAds1299Commands([line]);
 }
 
-async function writeBleCommandLine(line) {
+function updateCommandStatus() {
+  setText("cmdState", !state.bleRxCharacteristic ? "미연결"
+    : state.commandFault || state.commandError ? "오류"
+    : state.activeCommand ? "전송 중"
+    : state.bleConnecting && !state.bleVerified ? "연결 확인 중" : "준비됨");
+}
+
+async function writeBleCommandLine(line, session = state.bleSession) {
   const payload = new TextEncoder().encode(`${line}\n`);
   const ch = state.bleRxCharacteristic;
+  if (!ch) throw new Error("BLE write characteristic이 연결되지 않았습니다.");
+  if (payload.length > 256) throw new Error("명령이 펌웨어의 255-byte 한도를 초과했습니다.");
   const chunkSize = 18;
+  const write = ch.properties.write && ch.writeValueWithResponse
+    ? chunk => ch.writeValueWithResponse(chunk)
+    : ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse
+      ? chunk => ch.writeValueWithoutResponse(chunk)
+      : ch.writeValue ? chunk => ch.writeValue(chunk) : null;
+  if (!write) throw new Error("BLE write is not supported by this characteristic.");
 
   for (let offset = 0; offset < payload.length; offset += chunkSize) {
+    if (session !== state.bleSession) throw new Error("BLE 연결이 변경되어 명령을 취소했습니다.");
     const chunk = payload.slice(offset, offset + chunkSize);
-    let sent = false;
-    let lastErr = null;
-
-    if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) {
-      try {
-        await ch.writeValueWithoutResponse(chunk);
-        sent = true;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-
-    if (!sent && ch.properties.write && ch.writeValueWithResponse) {
-      try {
-        await ch.writeValueWithResponse(chunk);
-        sent = true;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-
-    if (!sent && ch.writeValue) {
-      try {
-        await ch.writeValue(chunk);
-        sent = true;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-
-    if (!sent) {
-      throw lastErr || new Error("BLE write is not supported by this characteristic.");
-    }
-    await new Promise(resolve => setTimeout(resolve, 15));
+    // Retrying a failed fragment can duplicate bytes already received by the board.
+    let timer;
+    try {
+      await Promise.race([
+        write(chunk),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${line}: BLE 쓰기 시간 초과`)), 7000); })
+      ]);
+    } finally { clearTimeout(timer); }
+    if (session !== state.bleSession) throw new Error("BLE 연결이 변경되어 명령을 취소했습니다.");
+    if (offset + chunkSize < payload.length) await new Promise(resolve => setTimeout(resolve, 15));
   }
 }
 
-async function sendAds1299Commands(commands) {
+async function sendAds1299Commands(commands, connectionCheck = false) {
   const lines = commands.map(v => String(v).trim()).filter(Boolean);
   if (!lines.length) return;
+  if (state.bleConnecting && !connectionCheck) throw new Error("BLE 보드 응답 확인이 끝난 뒤 명령을 보내세요.");
   if (!state.bleRxCharacteristic) {
     throw new Error("BLE가 연결되지 않았습니다. 먼저 BLE 버튼으로 보드에 연결하세요.");
   }
-  setText("cmdState", "전송 중");
   await queueAdsCommands(lines);
-  setText("cmdState", "준비됨");
   status(`명령 ${lines.length}개 전송됨:\n${lines.join("\n")}`);
 }
 
 function handleCommandResponse(text) {
   const pending = state.pendingCommand;
   if (!pending) return;
+  pending.lastResponse = text;
+  if (text === `RX ${pending.line}`) pending.echoReceived = true;
   if (/^ERR\b/.test(text)) { pending.reject(new Error(`${pending.line}: ${text}`)); return; }
   if (pending.allRegisters) {
     const match = /^REG 0x([\dA-F]{2}) 0x[\dA-F]{2}$/i.exec(text);
-    if (match) pending.seen.add(Number.parseInt(match[1], 16));
+    if (match && Number.parseInt(match[1], 16) < 24) pending.seen.add(Number.parseInt(match[1], 16));
     if (pending.seen.size === 24) pending.resolve();
   } else if (pending.match.test(text)) pending.resolve();
 }
 
 function queueAdsCommands(lines) {
+  const session = state.bleSession;
   state.commandJobs++;
   const run = async () => {
-    if (state.commandFault) throw new Error('이전 명령의 응답이 불확실합니다. BLE를 다시 연결한 뒤 설정을 적용하세요.');
+    if (session !== state.bleSession) throw new Error("이전 BLE 연결의 명령을 취소했습니다.");
+    if (state.commandFault) throw new Error(state.commandError || '이전 명령의 응답이 불확실합니다. BLE를 다시 연결한 뒤 설정을 적용하세요.');
+    state.commandError = null;
     for (const line of lines) {
+      if (session !== state.bleSession) throw new Error("이전 BLE 연결의 명령을 취소했습니다.");
       if (line === 'ADS1299 START') {
         const absent = Array.from({length:8}, (_, i) => i + 5).filter(addr => !Number.isFinite(adsRegisterValues[addr]));
         const mismatched = Object.entries(adsAppliedRegisters).filter(([addr, value]) => adsRegisterValues[addr] !== value);
@@ -3748,30 +3804,97 @@ function queueAdsCommands(lines) {
       const allRegisters = line === 'ADS1299 RREG ALL';
       const read = /^ADS1299 RREG\s+(0x[\da-f]+|ID)$/i.exec(line);
       const verb = /^ADS1299 (INIT|CONFIG|WREG|STOP|START|STREAM|CHANNELS)\b/.exec(line)?.[1];
-      const match = read ? new RegExp(`^REG ${read[1]}\\b`, 'i') : verb ? new RegExp(`^OK ${verb}\\b`) : null;
+      const match = line === 'PING' ? /^PONG$/
+        : line === 'ADS1299 VERSION' ? /^FW VERSION\b/
+        : read ? new RegExp(`^REG ${read[1] === 'ID' ? 'ID' : '0x' + Number(read[1]).toString(16).padStart(2, '0')}\\b`, 'i')
+        : verb ? new RegExp(`^OK ${verb}\\b`) : null;
       if (allRegisters) { for (const key of Object.keys(adsRegisterValues)) delete adsRegisterValues[key]; }
+      state.activeCommand = line;
+      updateCommandStatus();
+      setText("bleDiagnostic", `명령 확인 중: ${line}`);
+      logOnly(`TX ${line}`);
       if (match || allRegisters) {
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            state.commandFault = true;
-            finish(new Error(`${line}: 응답 시간 초과. BLE 재연결 후 설정을 다시 적용하세요.`));
-          }, 7000);
-          const finish = error => { clearTimeout(timer); state.pendingCommand = null; error ? reject(error) : resolve(); };
-          state.pendingCommand = {line, match, allRegisters, seen: new Set(), resolve: () => finish(), reject: finish};
-          writeBleCommandLine(line).catch(finish);
-        });
+        await exchangeAdsCommand(line, match, allRegisters, session);
+        if (session !== state.bleSession) throw new Error("이전 BLE 연결의 명령을 취소했습니다.");
         if (wreg) adsAppliedRegisters[Number(wreg[1])] = Number(wreg[2]);
         if (verb === 'CONFIG') {
           const mv = /\bVREF_MV=(\d+)/.exec(line);
           state.hardwareVrefVolts = mv ? Number(mv[1]) / 1000 : NaN;
         }
-      } else await writeBleCommandLine(line);
+      } else {
+        try { await writeBleCommandLine(line, session); }
+        catch (error) { if (session === state.bleSession) state.commandFault = true; throw error; }
+      }
+      if (session !== state.bleSession) throw new Error("이전 BLE 연결의 명령을 취소했습니다.");
+      if (verb === 'START') {
+        state.streamStartWatch = {session, samples: state.streamSampleCount, at: performance.now()};
+        setText("bleDiagnostic", "START 응답 확인 · 첫 EEG 샘플 대기");
+      } else {
+        if (verb === 'STOP') state.streamStartWatch = null;
+        setText("bleDiagnostic", `응답 확인: ${line}`);
+      }
       renderAdsRegisterMap();
     }
   };
-  const result = state.commandChain.then(run).finally(() => { state.commandJobs--; });
+  const result = state.commandChain.then(run).catch(error => {
+    if (session === state.bleSession) {
+      state.commandError = error.message;
+      setText("bleDiagnostic", error.message);
+    }
+    throw error;
+  }).finally(() => {
+    state.commandJobs--;
+    if (session === state.bleSession) { state.activeCommand = null; updateCommandStatus(); }
+  });
   state.commandChain = result.catch(() => {});
   return result;
+}
+
+async function exchangeAdsCommand(line, match, allRegisters, session) {
+  let pending, timer, settled = false;
+  const response = new Promise((resolve, reject) => {
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (state.pendingCommand === pending) state.pendingCommand = null;
+      error ? reject(error) : resolve();
+    };
+    pending = {line, match, allRegisters, seen: new Set(), echoReceived: false, lastResponse: "",
+      resolve: () => finish(), reject: finish};
+    state.pendingCommand = pending;
+  });
+  const writing = writeBleCommandLine(line, session).then(() => {
+    if (settled) return;
+    timer = setTimeout(() => {
+      if (session === state.bleSession) state.commandFault = true;
+      const detail = allRegisters ? `레지스터 ${pending.seen.size}/24개 수신`
+        : pending.echoReceived ? "보드 명령 수신 확인됨 · 완료 응답 없음"
+        : "보드의 명령 수신 확인 없음";
+      pending.reject(new Error(`${line}: 응답 시간 초과 (${detail}). BLE를 다시 연결하세요.${pending.lastResponse ? ` 마지막 응답: ${pending.lastResponse}` : ""}`));
+    }, 7000);
+  });
+  try {
+    await Promise.all([writing, response]);
+  } catch (error) {
+    if (session === state.bleSession) state.commandFault = true;
+    pending.reject(error);
+    throw error;
+  }
+}
+
+function checkStreamStart(now = performance.now()) {
+  const watch = state.streamStartWatch;
+  if (!watch || watch.session !== state.bleSession) return;
+  if (state.streamSampleCount > watch.samples) {
+    state.streamStartWatch = null;
+    setText("bleDiagnostic", "EEG 샘플 수신 중");
+  } else if (now - watch.at > 5000) {
+    state.streamStartWatch = null;
+    const message = "START 응답은 받았지만 EEG 샘플이 없습니다. 보드 로그의 STREAM WAIT DRDY/STREAM ERR와 ADS1299 전원·DRDY(P1.11)를 확인하세요.";
+    setText("bleDiagnostic", message);
+    status(message);
+  }
 }
 
 function adsConfigCommand() {
@@ -3838,7 +3961,7 @@ function inputShortCalibrationCommands() {
     const gain = (adsGainBits[row.querySelector(".ads-ch-gain").value] ?? 0b110) << 4;
     commands.push(`ADS1299 WREG ${hexAddr(0x05 + idx)} ${hexByte((enabled ? 0 : 0x80) | gain | adsMuxBits.SHORTED)}`);
   });
-  commands.push("ADS1299 WREG 0x0D 0x00", "ADS1299 WREG 0x0E 0x00", `ADS1299 STREAM MASK=${mask}`, "ADS1299 RREG ALL");
+  commands.push("ADS1299 WREG 0x0D 0x00", "ADS1299 WREG 0x0E 0x00", `ADS1299 STREAM MASK=${mask}`, ...adsReadConfigAndChannelCommands());
   return commands;
 }
 
@@ -4195,7 +4318,7 @@ function adsMetadataLines(headers = state.streamHeaders, rows = state.streamRows
     : "";
   return [
     '# metadata_schema_version=2',
-    '# gui_version=2026-10-16-measurement-v7',
+    '# gui_version=2026-10-26-ble-command-v8',
     `# configuration_version=${settings.configRevision}`,
     `# requested_sps=${settings.requestedSps}`,
     `# configured_adc_sps=${settings.rate}`,
@@ -4599,6 +4722,7 @@ updateReferenceHelp();
 updateRecordingButtons();
 setInterval(() => {
   updateTimers();
+  checkStreamStart();
   if (state.recording) updateRecordingButtons();
 }, 200);
 updateMetrics();
