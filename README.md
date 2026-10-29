@@ -2,6 +2,8 @@
 
 [웹 GUI 바로 열기 - 펌웨어 확인 v9](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-26-firmware-check-v9)
 
+[다른 노트북에서 소스 받기 · VS Code 빌드 · USB 이동 방법](LAPTOP_SETUP.md)
+
 ## GUI v9: 구형 보드 펌웨어 감지 (2026-10-26)
 
 - 실제 연결된 보드에서 `2026-09-09-gain-sync-v1`과 반복되는 `AUTO SPI PROBE` / `AUTO RESET_PROBE`가 확인됐습니다. 이 구형 펌웨어는 정지 중 자동 진단으로 ADC 설정을 바꾸므로 GUI 설정/readback과 충돌할 수 있습니다.
