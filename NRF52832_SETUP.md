@@ -3,6 +3,55 @@
 Target: nRF52 DK (PCA10040), nRF52832 QFAA, NCS v2.9.3.
 Firmware: `2026-11-02-nrf52-port-v1`. BLE name: `ADS1299_NRF52`.
 
+## 다른 Windows PC에서 시작
+
+1. Git, VS Code와 Nordic의 nRF Connect for VS Code 확장, nRF Connect SDK
+   **v2.9.3 및 해당 SDK용 toolchain**, SEGGER J-Link를 설치합니다.
+2. PowerShell에서 소스를 받습니다. 짧은 영문 경로를 권장합니다.
+
+```powershell
+git clone https://github.com/aewoonge-creator/ads1299-nrf54-ble-eeg.git C:\ncs\ads1299_nrf52832_ble
+cd C:\ncs\ads1299_nrf52832_ble
+```
+
+이미 받은 저장소라면 해당 폴더에서 `git pull --ff-only`로 업데이트합니다.
+로컬 수정 때문에 실패하면 수정 내용을 보존하고 먼저 차이를 확인합니다.
+
+3. VS Code에서 `C:\ncs\ads1299_nrf52832_ble` 폴더를 열고 nRF Connect 확장의
+   기존 애플리케이션 열기로 `firmware\nrf54_ads1299_ble`를 선택합니다.
+   경로 이름에 nrf54가 있지만 nRF52832도 지원하는 공용 소스입니다.
+4. 새 빌드 구성에서 SDK v2.9.3, 보드 **`nrf52dk/nrf52832`**, 새 빌드 디렉터리를
+   선택하고 **Sysbuild는 끈 상태**로 Build 합니다. 보드 전용 overlay와 conf는
+   자동 적용됩니다. 다른 보드용 빌드 디렉터리는 재사용하지 않습니다.
+5. nRF52 DK를 USB로 연결하고 해당 빌드 구성의 Flash를 실행합니다.
+   다른 보드도 연결되어 있다면 대상 디버거를 확인합니다.
+
+PowerShell 빌드 스크립트를 사용할 때 기본 경로는 이 PC의 SDK/toolchain 경로입니다.
+다른 PC에서는 실제 설치 경로로 아래 값을 바꿔 실행하세요.
+
+```powershell
+.\tools\build_firmware.ps1 -Board nrf52dk/nrf52832 -Sdk 'C:\ncs\v2.9.3' -Toolchain 'C:\ncs\toolchains\실제-toolchain-폴더'
+```
+
+소스 수정 없이 바로 플래시하려면 아래 HEX를 받아 nRF Connect for Desktop의
+Programmer에서 nRF52 DK를 선택하여 기록할 수 있습니다. 이 경우 SDK 빌드는 필요 없습니다.
+
+- [nRF52832 HEX 직접 다운로드](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/firmware/ads1299-nrf52832-2026-11-02-nrf52-port-v1.hex)
+- [빌드 정보와 SHA256](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/firmware/manifest-nrf52832.json)
+
+접근 보호 오류가 있을 때만 복구/erase 필요 여부를 확인합니다. 복구는 기존 프로그램을
+삭제하므로 일반 플래시 전에 무조건 실행하지 않습니다.
+
+현재 사용 중인 ADS 보드는 연결 시 전원 강하가 관찰되었습니다. 원인 해결 전에는
+ADS를 분리하고 nRF 단독으로 빌드/플래시/버전 확인까지만 진행하세요.
+
+## 실기 확인 상태
+
+2026-11-02에 디버거 `1050393707`의 `NRF52832_xxAA_REV3`에서 보호 해제,
+HEX 기록 및 verify, 재부팅을 완료했습니다. RTT로
+`FW VERSION 2026-11-02-nrf52-port-v1` 응답을 확인했습니다.
+이 결과는 ADS1299 통신, 실제 BLE 수신 또는 EEG 측정 검증을 의미하지 않습니다.
+
 ## 배선
 
 전원을 끄고 아래대로 변경합니다. nRF54L15의 P0.00/P0.01은 이 보드의 SPI 핀이
