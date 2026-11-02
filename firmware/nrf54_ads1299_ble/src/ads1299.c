@@ -15,11 +15,19 @@ LOG_MODULE_REGISTER(ads1299, LOG_LEVEL_INF);
 #define ADS1299_NODE DT_NODELABEL(ads1299)
 #define ADS1299_CONTROL_NODE DT_NODELABEL(ads1299_control)
 #define ADS1299_MISO_PROBE_NODE DT_NODELABEL(gpio0)
+#if defined(CONFIG_SOC_NRF52832)
+#define ADS1299_BB_SCK_PIN 25
+#define ADS1299_BB_MOSI_PIN 23
+#define ADS1299_MISO_PROBE_PIN 24
+#define ADS1299_BB_CS_PIN 22
+#define ADS1299_BB_RESET_PIN 27
+#else
 #define ADS1299_BB_SCK_PIN 0
 #define ADS1299_BB_MOSI_PIN 1
 #define ADS1299_MISO_PROBE_PIN 2
 #define ADS1299_BB_CS_PIN 3
 #define ADS1299_BB_RESET_PIN 4
+#endif
 
 #define ADS1299_CMD_WAKEUP  0x02
 #define ADS1299_CMD_STANDBY 0x04
@@ -229,18 +237,59 @@ static int ads1299_transfer_no_cs(const uint8_t *tx, uint8_t *rx, size_t len)
 	return err;
 }
 
+/* Keep CS asserted across opcode/count/data and allow command decode time.
+ * The SPIM buffers are in RAM, including command-only transactions.
+ */
+static int hardware_transaction(const uint8_t *tx, uint8_t *rx,
+				size_t len, size_t command_bytes)
+{
+	int err = ads1299_configure_spi_pins();
+	if (err) return err;
+	k_mutex_lock(&spi_lock, K_FOREVER);
+	gpio_pin_set_dt(&cs_gpio, 1);
+	k_busy_wait(4);
+	for (size_t i = 0; i < command_bytes; i++) {
+		err = ads1299_transfer_no_cs(tx + i, rx ? rx + i : NULL, 1);
+		if (err) break;
+		k_busy_wait(4);
+	}
+	if (!err && len > command_bytes) {
+		err = ads1299_transfer_no_cs(tx + command_bytes,
+			rx ? rx + command_bytes : NULL, len - command_bytes);
+	}
+	k_busy_wait(4);
+	gpio_pin_set_dt(&cs_gpio, 0);
+	k_mutex_unlock(&spi_lock);
+	return err;
+}
+
 static int ads1299_cmd(uint8_t command)
 {
+	if (IS_ENABLED(CONFIG_SOC_NRF52832)) {
+		return hardware_transaction(&command, NULL, 1, 1);
+	}
 	return bitbang_cmd(command);
 }
 
 static int ads1299_read_reg(uint8_t reg, uint8_t *value)
 {
+	if (IS_ENABLED(CONFIG_SOC_NRF52832)) {
+		uint8_t tx[3] = { ADS1299_CMD_RREG | reg, 0, 0 };
+		uint8_t rx[3];
+		if (!value) return -EINVAL;
+		int err = hardware_transaction(tx, rx, sizeof(tx), 2);
+		if (!err) *value = rx[2];
+		return err;
+	}
 	return bitbang_read_reg(reg, value);
 }
 
 static int ads1299_write_reg(uint8_t reg, uint8_t value)
 {
+	if (IS_ENABLED(CONFIG_SOC_NRF52832)) {
+		uint8_t tx[3] = { ADS1299_CMD_WREG | reg, 0, value };
+		return hardware_transaction(tx, NULL, sizeof(tx), 2);
+	}
 	return bitbang_write_reg(reg, value);
 }
 
@@ -793,6 +842,8 @@ static int bitbang_read_id_mode(uint8_t mode, uint8_t *id)
 
 int ads1299_bitbang_probe_id_modes(char *response, size_t response_len)
 {
+	/* GPIO bit-banging would steal pins from the active SPIM peripheral. */
+	if (IS_ENABLED(CONFIG_SOC_NRF52832)) return -ENOTSUP;
 	size_t used = 0;
 
 	if (!response || response_len == 0) {
@@ -958,6 +1009,10 @@ int ads1299_apply_config(const struct ads1299_config *config)
 
 static int read_data_frame(uint8_t *frame)
 {
+	if (IS_ENABLED(CONFIG_SOC_NRF52832)) {
+		uint8_t tx[ADS1299_FRAME_BYTES + 1] = { ADS1299_CMD_RDATA };
+		return hardware_transaction(tx, frame, sizeof(tx), 1);
+	}
 	const struct device *gpio = DEVICE_DT_GET(ADS1299_MISO_PROBE_NODE);
 	int err = bitbang_gpio_configure(gpio);
 	if (err) {

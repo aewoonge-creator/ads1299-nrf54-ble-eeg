@@ -1,4 +1,6 @@
 param(
+    [ValidateSet('nrf52dk/nrf52832', 'nrf54l15dk/nrf54l15/cpuapp')]
+    [string]$Board = 'nrf52dk/nrf52832',
     [string]$Sdk = 'C:\ncs\v2.9.3',
     [string]$Toolchain = 'C:\ncs\toolchains\b620d30767',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\docs\firmware')
@@ -6,6 +8,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $source = Join-Path $repository 'firmware\nrf54_ads1299_ble'
+$isNrf52 = $Board -eq 'nrf52dk/nrf52832'
+$boardFile = if ($isNrf52) { 'nrf52dk_nrf52832' } else { 'nrf54l15dk_nrf54l15_cpuapp' }
+$chip = if ($isNrf52) { 'nrf52832' } else { 'nrf54l15' }
 $stage = Join-Path $env:TEMP ('ads1299-release-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item -LiteralPath $source -Destination (Join-Path $stage 'app') -Recurse
@@ -26,25 +31,26 @@ $python = Join-Path $Toolchain 'opt\bin\python.exe'
 $build = Join-Path $stage 'build'
 Push-Location $Sdk
 try {
-    & $python -m west build -b nrf54l15dk/nrf54l15/cpuapp --no-sysbuild -s (Join-Path $stage 'app') -d $build
+    & $python -m west build -b $Board --no-sysbuild -s (Join-Path $stage 'app') -d $build
     if ($LASTEXITCODE -ne 0) { throw "Firmware build failed. Build directory: $stage" }
 } finally { Pop-Location }
 $versionMatch = [regex]::Match((Get-Content -LiteralPath (Join-Path $source 'src\main.c') -Raw), '#define\s+FW_VERSION\s+"([^"]+)"')
 if (-not $versionMatch.Success) { throw 'FW_VERSION is missing.' }
 $version = $versionMatch.Groups[1].Value
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-$hexName = 'ads1299-nrf54l15-' + $version + '.hex'
+$hexName = 'ads1299-' + $chip + '-' + $version + '.hex'
 $hex = Join-Path $OutputDirectory $hexName
 Copy-Item -LiteralPath (Join-Path $build 'zephyr\zephyr.hex') -Destination $hex
-$sources = @('CMakeLists.txt', 'prj.conf', 'src/main.c', 'src/ads1299.c', 'src/ads1299.h', 'boards/nrf54l15dk_nrf54l15_cpuapp.overlay')
+$sources = @('CMakeLists.txt', 'prj.conf', 'src/main.c', 'src/ads1299.c', 'src/ads1299.h', "boards/$boardFile.overlay", 'dts/bindings/gpio/ti,ads1299-control.yaml', 'dts/bindings/sensor/ti,ads1299.yaml')
+if ($isNrf52) { $sources += "boards/$boardFile.conf" }
 $manifest = [ordered]@{
     firmware_version = $version
-    board = 'nrf54l15dk/nrf54l15/cpuapp'
+    board = $Board
     sdk = (Split-Path $Sdk -Leaf)
     hex_file = $hexName
     sha256 = (Get-FileHash -LiteralPath $hex -Algorithm SHA256).Hash.ToLowerInvariant()
     build_utc = [DateTime]::UtcNow.ToString('o')
-    drdy = 'P1.11'
+    drdy = $(if ($isNrf52) { 'P0.26' } else { 'P1.11' })
     start_stop = 'SPI commands; no START GPIO'
     auto_probe = $false
     sources = @($sources | ForEach-Object {
@@ -52,7 +58,7 @@ $manifest = [ordered]@{
     })
     validation = 'Compiled from repository sources; not flashed or wirelessly measured in this build.'
 }
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json') -Encoding utf8
+$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $OutputDirectory "manifest-$chip.json") -Encoding utf8
 Write-Output "Firmware: $hex"
 Write-Output "SHA256: $($manifest.sha256)"
 Write-Output "Build directory retained: $stage"

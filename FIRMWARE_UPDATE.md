@@ -1,4 +1,17 @@
-# nRF54L15 DK 펌웨어 업데이트
+# 보드 펌웨어 업데이트
+
+## 현재 대상: nRF52832 DK
+
+nRF52 DK / PCA10040에는 **nRF52832 HEX만** 사용하세요.
+
+- [nRF52832 HEX 다운로드](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/firmware/ads1299-nrf52832-2026-11-02-nrf52-port-v1.hex)
+- [배선·빌드·플래시·검증 절차](NRF52832_SETUP.md)
+- [SHA256 및 소스 해시](docs/firmware/manifest-nrf52832.json)
+
+이번 nRF52832 버전은 빌드 및 소프트웨어 회귀 검증 대상입니다. 보드 플래시와
+ADS1299 실측 검증은 별도로 필요합니다. 아래 내용은 이전 nRF54L15용 기록입니다.
+
+## 이전 대상: nRF54L15 DK
 
 웹 GUI 업데이트와 보드 펌웨어 업데이트는 별개입니다. `AUTO SPI PROBE`,
 `AUTO BITBANG PROBE`, `AUTO RESET_PROBE`가 반복되는 구형 보드는 USB 업데이트가 필요합니다.

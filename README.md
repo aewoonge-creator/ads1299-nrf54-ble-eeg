@@ -1,4 +1,19 @@
-# ADS1299 nRF54 BLE EEG
+# ADS1299 nRF52832 / nRF54 BLE EEG
+
+## nRF52832 DK 이식 (2026-11-02)
+
+현재 기본 대상은 **nRF52 DK / PCA10040 / nRF52832 (512KB Flash, 64KB RAM)** 입니다.
+기존 웹 GUI의 8채널 설정, 내부 TEST, FFT/PSD, 실시간 plot, raw CSV 저장·불러오기를
+같은 BLE UUID와 명령 규격으로 사용합니다. BLE 이름은 `ADS1299_NRF52`입니다.
+
+- [nRF52832 배선·빌드·실험 순서](NRF52832_SETUP.md)
+- [nRF52832 HEX](docs/firmware/ads1299-nrf52832-2026-11-02-nrf52-port-v1.hex)
+- [nRF52832 빌드 정보](docs/firmware/manifest-nrf52832.json)
+- [웹 GUI](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-11-02-nrf52-port-v1)
+
+펌웨어 소스 경로 `firmware/nrf54_ads1299_ble`는 기존 경로 호환을 위해 유지하며,
+보드별 overlay/config로 nRF52832와 nRF54L15를 구분합니다. 아래 nRF54 검증 기록은
+이전 보드의 기록이며 nRF52832 실측 완료를 뜻하지 않습니다.
 
 [웹 GUI 바로 열기 - 펌웨어 확인 v9](https://aewoonge-creator.github.io/ads1299-nrf54-ble-eeg/?v=2026-10-26-firmware-check-v9)
 

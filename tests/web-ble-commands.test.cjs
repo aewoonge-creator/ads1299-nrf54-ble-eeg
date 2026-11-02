@@ -211,6 +211,13 @@ test('current firmware is displayed without a legacy warning', () => {
   assert.equal(messages.boardFirmwareVersion, '2026-10-16-drdy-p111-v6');
 });
 
+test('nRF52832 firmware is accepted by the existing GUI handshake', () => {
+  const {c, state, messages} = harness();
+  c.observeFirmwareLine('FW VERSION 2026-11-02-nrf52-port-v1');
+  assert.equal(state.firmwareIssue, undefined);
+  assert.equal(messages.boardFirmwareVersion, '2026-11-02-nrf52-port-v1');
+});
+
 test('START reports actual missing and mismatched channel registers without writing START', async () => {
   const {c} = harness();
   let writes = 0;

@@ -17,6 +17,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--serial', type=int, required=True)
 parser.add_argument('--dll', required=True)
 parser.add_argument('--seconds', type=float, default=30)
+parser.add_argument('--device', default='NRF52832_XXAA')
+parser.add_argument('--rate', type=int, choices=[250, 500, 1000, 2000, 4000, 8000, 16000], default=250)
 parser.add_argument('--mode', choices=['test', 'short'], default='test')
 parser.add_argument('--check-readback', action='store_true', help='Verify all eight channel registers across the old 3-second auto-reset interval')
 parser.add_argument('--output', type=Path, required=True)
@@ -69,14 +71,14 @@ def command(value):
 try:
     p.open(serial_no=args.serial)
     p.set_tif(pylink.enums.JLinkInterfaces.SWD)
-    p.connect('NRF54L15_M33', speed=4000)
+    p.connect(args.device, speed=4000)
     p.rtt_start()
     pump(0.3)
     command('ADS1299 STOP')
     command('ADS1299 VERSION')
     command('ADS1299 INIT')
     mux, test = ('NORMAL', 'ON') if args.mode == 'test' else ('SHORTED', 'OFF')
-    command(f'ADS1299 CONFIG RATE=250 GAIN=24 REF=DIFFERENTIAL MUX={mux} BIAS=OFF LOFF=OFF TEST={test} TEST_AMP=1X TEST_FREQ=SLOW MASK=0xFF')
+    command(f'ADS1299 CONFIG RATE={args.rate} GAIN=24 REF=DIFFERENTIAL MUX={mux} BIAS=OFF LOFF=OFF TEST={test} TEST_AMP=1X TEST_FREQ=SLOW MASK=0xFF')
     if args.check_readback:
         expected = 0x65 if args.mode == 'test' else 0x61
         snapshots = []

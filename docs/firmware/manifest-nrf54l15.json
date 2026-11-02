@@ -1,0 +1,46 @@
+{
+  "firmware_version": "2026-11-02-nrf52-port-v1",
+  "board": "nrf54l15dk/nrf54l15/cpuapp",
+  "sdk": "v2.9.3",
+  "hex_file": "ads1299-nrf54l15-2026-11-02-nrf52-port-v1.hex",
+  "sha256": "85afdefce4aa421a8ea209bec414c7476f990eac079e22b88236b0eb8ecf3e0c",
+  "build_utc": "2026-11-02T05:38:02.5363615Z",
+  "drdy": "P1.11",
+  "start_stop": "SPI commands; no START GPIO",
+  "auto_probe": false,
+  "sources": [
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "90a41ac6bf531a5791a1d667561fbe7a6f22fd7b84f1e1ad9448f3675be0db41"
+    },
+    {
+      "path": "prj.conf",
+      "sha256": "a078025e4ba37f3302836495320ab36fa480cd32f5855de74ee38eb0eab66a23"
+    },
+    {
+      "path": "src/main.c",
+      "sha256": "03ecd356f2ecfd3de3daf002d1f9e18214b90c9fed388146e75b7cfaf52f429b"
+    },
+    {
+      "path": "src/ads1299.c",
+      "sha256": "d84d0164cced7de86187afd075865df9208b7fbcee9d0d5f114ee937c4723807"
+    },
+    {
+      "path": "src/ads1299.h",
+      "sha256": "9c2a492985a1d23ad434563b29a7a5155c1f65993e592b73ddef4b2f4c02e1df"
+    },
+    {
+      "path": "boards/nrf54l15dk_nrf54l15_cpuapp.overlay",
+      "sha256": "dca557fcbe22d6ff8a88c77c91801761203082f72b6bd1d201aa0b7989b42c78"
+    },
+    {
+      "path": "dts/bindings/gpio/ti,ads1299-control.yaml",
+      "sha256": "dfdd67bcc3970d37de9224aa249d6310dc3d5a9158c20a54dd01d29f0cd68692"
+    },
+    {
+      "path": "dts/bindings/sensor/ti,ads1299.yaml",
+      "sha256": "7924cc42639f48f70fafa22d61a0a6f9d9f692df7e30580f545e48bb9190614a"
+    }
+  ],
+  "validation": "Compiled from repository sources; not flashed or wirelessly measured in this build."
+}

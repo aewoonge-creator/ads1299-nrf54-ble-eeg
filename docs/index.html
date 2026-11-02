@@ -969,7 +969,8 @@
       <p>보드 펌웨어: <span id="boardFirmwareVersion">미확인</span></p>
       <div id="firmwareWarning" hidden role="alert">
         <p id="firmwareWarningText"></p>
-        <a href="firmware/ads1299-nrf54l15-2026-10-16-drdy-p111-v6.hex" download>nRF54L15 DK 펌웨어 다운로드</a>
+        <a href="firmware/ads1299-nrf52832-2026-11-02-nrf52-port-v1.hex" download>nRF52832 DK 펌웨어 다운로드</a>
+        · <a href="firmware/ads1299-nrf54l15-2026-10-16-drdy-p111-v6.hex" download>기존 nRF54L15 펌웨어</a>
         · <a href="https://github.com/aewoonge-creator/ads1299-nrf54-ble-eeg/blob/main/FIRMWARE_UPDATE.md" target="_blank" rel="noopener">업데이트 절차</a>
       </div>
       <div class="row">
@@ -1881,7 +1882,7 @@ function checkInternalTestTimeout(now = performance.now()) {
       failInternalTest("START 응답이 없습니다. 연결 및 보드 응답 로그를 확인하세요.");
     }
   } else if (now - diagnostic.lastSampleAt > 5000) {
-    failInternalTest("샘플을 받지 못했습니다. DRDY(P1.11) 연결과 보드 응답 로그를 확인하세요.");
+    failInternalTest("샘플을 받지 못했습니다. DRDY(nRF52832: P0.26 / nRF54L15: P1.11) 연결과 보드 응답 로그를 확인하세요.");
   } else if (now - diagnostic.startedAt > 20000) {
     failInternalTest("측정 시간이 진행되지 않습니다. 샘플 시간(t_us)과 누락 여부를 확인하세요.");
   }
@@ -1891,7 +1892,7 @@ function handleInternalTestDeviceLine(line) {
   const diagnostic = state.testDiagnostic;
   if (!diagnostic) return;
   if (/^STREAM WAIT DRDY\b/.test(line)) {
-    failInternalTest("DRDY 데이터 준비 신호가 없습니다. ADS1299 J3-15 → nRF P1.11 배선과 보드 점퍼를 확인하세요. 전극 연결은 필요 없습니다.");
+    failInternalTest("DRDY 데이터 준비 신호가 없습니다. ADS1299 J3-15 → nRF52832 P0.26(nRF54L15는 P1.11) 배선과 보드 점퍼를 확인하세요. 전극 연결은 필요 없습니다.");
   } else if (/^(ERR\b|STREAM ERR\b)/.test(line)) {
     failInternalTest(`보드 오류: ${line}`);
   } else if (line === "OK START" && diagnostic.phase === "configuring") {
@@ -3621,7 +3622,7 @@ async function connectBle() {
     status("BLE service UUID와 characteristic UUID를 입력하세요.");
     return;
   }
-  status("BLE 장치 선택창을 여는 중입니다. ADS1299_NRF54를 선택하세요.");
+  status("BLE 장치 선택창을 여는 중입니다. ADS1299_NRF52(nRF52832) 또는 ADS1299_NRF54를 선택하세요.");
   state.bleConnecting = true;
   $("bleBtn").disabled = true;
   let session;
@@ -3756,7 +3757,7 @@ function observeFirmwareLine(text) {
   if (/^AUTO (?:SPI PROBE|BITBANG PROBE|RESET[ _]PROBE)\b/i.test(text)) state.legacyAutoProbeDetected = true;
   const legacyVersion = /(?:gain-sync-v1|drdy-stream-v2|test-cal-v4)$/.test(state.firmwareVersion || "");
   if (state.legacyAutoProbeDetected || legacyVersion) {
-    state.firmwareIssue = "구형 자동 진단 펌웨어 감지: AUTO RESET/SPI PROBE가 ADS1299 설정을 변경해 Start를 방해합니다. nRF54L15 DK 펌웨어를 USB로 업데이트하세요. 웹 새로고침만으로는 보드가 업데이트되지 않습니다.";
+    state.firmwareIssue = "구형 자동 진단 펌웨어 감지: AUTO RESET/SPI PROBE가 ADS1299 설정을 변경해 Start를 방해합니다. 해당 보드 모델의 펌웨어를 USB로 업데이트하세요. 웹 새로고침만으로는 보드가 업데이트되지 않습니다.";
     state.commandError = state.firmwareIssue;
     setText("bleDiagnostic", state.firmwareIssue);
     if (state.pendingCommand && /^ADS1299 (?:INIT|CONFIG|WREG|CHANNELS|STREAM|START|TEST)\b/.test(state.pendingCommand.line)) {
@@ -3946,7 +3947,7 @@ function checkStreamStart(now = performance.now()) {
     setText("bleDiagnostic", "EEG 샘플 수신 중");
   } else if (now - watch.at > 5000) {
     state.streamStartWatch = null;
-    const message = "START 응답은 받았지만 EEG 샘플이 없습니다. 보드 로그의 STREAM WAIT DRDY/STREAM ERR와 ADS1299 전원·DRDY(P1.11)를 확인하세요.";
+    const message = "START 응답은 받았지만 EEG 샘플이 없습니다. 보드 로그의 STREAM WAIT DRDY/STREAM ERR와 ADS1299 전원·DRDY(nRF52832: P0.26 / nRF54L15: P1.11)를 확인하세요.";
     setText("bleDiagnostic", message);
     status(message);
   }

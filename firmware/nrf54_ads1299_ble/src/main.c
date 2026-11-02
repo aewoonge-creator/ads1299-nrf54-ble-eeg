@@ -24,7 +24,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define UART_TX_UUID_VAL      BT_UUID_128_ENCODE(0x6e400003, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 #define COMMAND_QUEUE_DEPTH   32
 #define COMMAND_MAX_LEN       256
-#define FW_VERSION            "2026-10-16-drdy-p111-v6"
+#define FW_VERSION            "2026-11-02-nrf52-port-v1"
 
 static struct bt_uuid_128 uart_service_uuid = BT_UUID_INIT_128(UART_SERVICE_UUID_VAL);
 static struct bt_uuid_128 uart_rx_uuid = BT_UUID_INIT_128(UART_RX_UUID_VAL);
@@ -372,6 +372,10 @@ BT_GATT_SERVICE_DEFINE(uart_service,
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, UART_SERVICE_UUID_VAL),
+};
+
+/* Legacy advertising has only 31 bytes; put the full name in scan response. */
+static const struct bt_data sd[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
@@ -850,13 +854,13 @@ int main(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
+	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		LOG_ERR("Advertising failed: %d", err);
 		return err;
 	}
 
-	LOG_INF("ADS1299 nRF54 BLE started");
+	LOG_INF("%s BLE started", CONFIG_BT_DEVICE_NAME);
 	ble_send_line("READY ADS1299 RTT/BLE FW " FW_VERSION "\n");
 	send_ads_state("READY");
 
@@ -904,7 +908,7 @@ int main(void)
 				   k_uptime_get() - last_sample_ms > 1000 &&
 				   k_uptime_get() - last_stream_status_ms > 2000) {
 				last_stream_status_ms = k_uptime_get();
-				ble_send_line("STREAM WAIT DRDY: no conversion-ready signal on P1.11\n");
+				ble_send_line("STREAM WAIT DRDY: no conversion-ready signal; check board overlay wiring\n");
 			} else if (sample_err != -EAGAIN &&
 				   k_uptime_get() - last_stream_status_ms > 1000) {
 				last_stream_status_ms = k_uptime_get();
